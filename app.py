@@ -259,6 +259,10 @@ ACTIONS_INFO = {
     "reply_attack_timeline": {"cost": 1200, "type": "reply", "label": "Reply 主打时间线矛盾"},
     "reply_attack_pj": {"cost": 1200, "type": "reply", "label": "Reply 主打程序门槛"},
     "reply_narrow": {"cost": 700, "type": "reply", "label": "Reply 保守收束"},
+        "pi_attack_similarity": {"cost": 1400, "type": "pi_opp", "label": "PI Opposition：攻击相似性"},
+    "pi_attack_scope": {"cost": 1400, "type": "pi_opp", "label": "PI Opposition：攻击保护范围"},
+    "pi_assert_independent_creation": {"cost": 1600, "type": "pi_opp", "label": "PI Opposition：主张独立来源"},
+    "pi_attack_ownership": {"cost": 1300, "type": "pi_opp", "label": "PI Opposition：攻击权属与基础"},
 }
 
 def rand_choice(rng, key):
@@ -290,6 +294,21 @@ def init_game(seed=None):
     sales_norm = min(sales_amount / 80000, 1)
     plaintiff_expectation = round(min(1, 0.6 * frozen_norm + 0.4 * sales_norm), 3)
 
+    plaintiff_expected_recovery = int(
+        (0.5 * frozen_amount + 0.15 * sales_amount) * (0.6 + plaintiff_expectation)
+    )
+
+    work_type = rng.choice([
+        "simple_product_photo",
+        "styled_product_image",
+        "high_creativity_work",
+    ])
+    prior_art_density = rng.choice(["low", "medium", "high"])
+    similarity_to_claimed = rng.randint(35, 95)
+    similarity_to_prior_market = rng.randint(20, 90)
+    independent_creation_support = rng.choice(["none", "weak", "strong"])
+    ownership_clarity = rng.choice(["clear", "questionable", "weak"])
+
     state = {
         "seed": seed,
         "rng": seed,
@@ -305,9 +324,18 @@ def init_game(seed=None):
         "judge_key": judge_key,
         "opponent_key": opponent_key,
         "strategy": None,
-        "motion_filed": False,
-        "response_seen": False,
-        "reply_done": False,
+        "mtd_motion_filed": False,
+        "mtd_opposition_seen": False,
+        "mtd_reply_done": False,
+        "mtd_result": None,
+        "pi_motion_seen": False,
+        "pi_opposition_choice": None,
+        "pi_reply_seen": False,
+        "pi_result": None,
+        "current_demand": None,
+        "settlement_history": [],
+        "demand_stage_seen": set(),
+        "counter_offer_last": None,
         "outcome": None,
         "history": [],
         "facts_known": [],
@@ -326,6 +354,13 @@ def init_game(seed=None):
             "frozen_amount": frozen_amount,
             "sales_amount": sales_amount,
             "plaintiff_expectation": plaintiff_expectation,
+            "plaintiff_expected_recovery": plaintiff_expected_recovery,
+            "work_type": work_type,
+            "prior_art_density": prior_art_density,
+            "similarity_to_claimed": similarity_to_claimed,
+            "similarity_to_prior_market": similarity_to_prior_market,
+            "independent_creation_support": independent_creation_support,
+            "ownership_clarity": ownership_clarity,
         },
         "review_materials": {
             "complaint": build_complaint_text(
@@ -363,6 +398,54 @@ def spend_plaintiff(cost):
 def can_pay(cost):
     return g()["client_budget"] >= cost
 
+def compute_pi_merits_score():
+    hc = g()["hidden_case"]
+
+    score = 50
+
+    work_type_bonus = {
+        "simple_product_photo": -12,
+        "styled_product_image": 4,
+        "high_creativity_work": 14,
+    }
+    prior_art_penalty = {
+        "low": 12,
+        "medium": 0,
+        "high": -14,
+    }
+    independent_creation_penalty = {
+        "none": 10,
+        "weak": -4,
+        "strong": -14,
+    }
+    ownership_bonus = {
+        "clear": 8,
+        "questionable": -6,
+        "weak": -14,
+    }
+
+    score += work_type_bonus[hc["work_type"]]
+    score += prior_art_penalty[hc["prior_art_density"]]
+    score += independent_creation_penalty[hc["independent_creation_support"]]
+    score += ownership_bonus[hc["ownership_clarity"]]
+
+    score += int((hc["similarity_to_claimed"] - 50) * 0.55)
+    score -= int((hc["similarity_to_prior_market"] - 50) * 0.40)
+
+    if hc["evidence_issue"]:
+        score -= 8
+
+    if not hc["forum_sale"]:
+        score -= 3
+
+    if hc["test_buy"]:
+        if hc["test_buy_strength"] == "strong":
+            score += 6
+        else:
+            score += 2
+
+    return max(0, min(100, score))
+
 def get_initial_position():
     hc = g()["hidden_case"]
 
@@ -395,6 +478,9 @@ def get_initial_position():
 def estimate_liability(outcome):
     title = outcome.get("title", "")
     hc = g()["hidden_case"]
+
+    if "liability" in outcome:
+        return outcome["liability"]
 
     base_ranges = {
         "代理终止 / 缺席判决": (26000, 32000),
@@ -513,10 +599,14 @@ def phase_name():
         "investigation": "调查事实",
         "research": "研究法律",
         "strategy": "选择策略",
-        "motion": "提交动议",
-        "response": "阅读对方 response",
-        "reply": "提交我方 reply",
-        "ruling": "等待裁决",
+        "mtd_motion": "提交 MTD",
+        "mtd_opposition": "阅读原告对 MTD 的 opposition",
+        "mtd_reply": "提交 MTD reply",
+        "mtd_ruling": "等待 MTD 裁决",
+        "pi_motion": "阅读原告 PI motion",
+        "pi_opposition": "提交 PI opposition",
+        "pi_reply": "阅读原告 PI reply",
+        "pi_ruling": "等待 PI 裁决",
         "ended": "本局结束",
     }
     return mapping[g()["phase"]]
@@ -611,17 +701,25 @@ def current_guidance():
     if ph == "investigation":
         return "选一个事实调查方向。调查结果只会给你材料，不会告诉你好坏。"
     if ph == "research":
-        return "研究本 circuit 倾向。它会影响后面的策略与裁决，但不会替你做判断。"
+        return "研究判例和攻击路径。重点是程序抗辩与版权实体风险。"
     if ph == "strategy":
-        return "现在要定路线。程序抗辩、禁令对抗、和解压价、消耗战，不会同时都最优。"
-    if ph == "motion":
-        return "决定正式出手。你现在选择的动作，会触发对方 response。"
-    if ph == "response":
-        return "对方会补材料、补说法或强调紧急性。你要从中看出弱点。"
-    if ph == "reply":
-        return "reply 不是重打一遍，而是决定你把最后资源压在哪个点上。"
-    if ph == "ruling":
-        return "法官即将裁定。真正的标准答案会在结局时揭晓。"
+        return "决定先打 MTD，还是直接进入 PI opposition。"
+    if ph == "mtd_motion":
+        return "现在提交 Motion to Dismiss。若不能直接切断案件，后面还会进入 PI。"
+    if ph == "mtd_opposition":
+        return "原告会针对个人管辖和程序门槛反击。注意它会不会补 forum contacts 和 test buy。"
+    if ph == "mtd_reply":
+        return "MTD reply 只打关键点，不要贪多。"
+    if ph == "mtd_ruling":
+        return "MTD 即将裁决。若未彻底终结案件，就会进入 PI 主线。"
+    if ph == "pi_motion":
+        return "现在阅读原告 PI motion。核心看它如何讲侵权成立。"
+    if ph == "pi_opposition":
+        return "PI opposition 只围绕实体胜算打。你要决定打相似性、保护范围、独立来源，还是权属基础。"
+    if ph == "pi_reply":
+        return "原告会对你选择的攻击路径作出针对性反击。"
+    if ph == "pi_ruling":
+        return "法官即将就 PI 作出裁决。这里基本决定案件后续谈判地位。"
     return ""
 
 def reveal_complaint():
@@ -681,6 +779,7 @@ def reveal_financials():
     g()["facts_known"].append(f"材料：{text}")
     g()["facts_known"].append(signal)
     add_history("核实冻结金额与销售金额", text)
+    trigger_demand("post_intake", "TRO 后初始报价")
     mark_used("review_financials")
     g()["subphase_done"] = True
 
@@ -744,6 +843,7 @@ def research_settle():
     )
     g()["research_known"].append(f"研究结果：{text}")
     add_history("观察对方推进强度", text)
+    trigger_demand("post_research", "研究后试探报价")
     mark_used("research_settle")
     g()["subphase_done"] = True
 
@@ -819,6 +919,198 @@ def submit_reply(reply_key):
     add_history("我方 reply", text)
     g()["reply_done"] = True
     g()["reply_choice"] = reply_key
+    g()["subphase_done"] = True
+
+def generate_mtd_opposition():
+    hc = g()["hidden_case"]
+    texts = []
+
+    if hc["forum_sale"]:
+        texts.append("原告 opposition 强调你客户存在 Illinois 订单，并主张这些记录足以支撑 forum contacts。")
+    else:
+        texts.append("原告 opposition 试图用 nationwide availability 补强个人管辖，但对具体 Illinois contacts 的展开仍较薄弱。")
+
+    if hc["test_buy"]:
+        if hc["test_buy_strength"] == "strong":
+            texts.append("原告进一步强调 Illinois test buy 记录较完整，试图把程序争点拉回到具体交易。")
+        else:
+            texts.append("原告提到做过 Illinois test buy，但其 supporting detail 仍不算完整。")
+
+    opposition_text = " ".join(texts)
+    add_history("原告对 MTD 的 opposition", opposition_text)
+    spend_plaintiff(random.randint(1000, 1800))
+    g()["mtd_opposition_seen"] = True
+    g()["subphase_done"] = True
+
+def submit_mtd_reply(reply_key):
+    spend_client(ACTIONS_INFO[reply_key]["cost"])
+
+    if reply_key == "reply_attack_timeline":
+        text = rand_choice(random.Random(g()["seed"] + 311), "reply_attack_timeline")
+    elif reply_key == "reply_attack_pj":
+        text = rand_choice(random.Random(g()["seed"] + 331), "reply_attack_pj")
+    else:
+        text = rand_choice(random.Random(g()["seed"] + 351), "reply_narrow")
+
+    add_history("MTD reply", text)
+    g()["mtd_reply_done"] = True
+    g()["reply_choice"] = reply_key
+    g()["subphase_done"] = True
+
+def generate_pi_motion():
+    hc = g()["hidden_case"]
+    pi_score = compute_pi_merits_score()
+
+    texts = []
+
+    if pi_score >= 70:
+        texts.append("原告 PI motion 强调其版权作品保护较强，且被告作品与原告作品高度相似。")
+    elif pi_score >= 45:
+        texts.append("原告 PI motion 主张两者在关键表达上存在较高重合，并试图把争议描述为普通 copying case。")
+    else:
+        texts.append("原告 PI motion 尝试维持侵权叙事，但其对作品独特性和相似性的论证并不十分扎实。")
+
+    if hc["prior_art_density"] == "high":
+        texts.append("你注意到 motion 对市场上在先类似作品的讨论很少。")
+
+    if hc["independent_creation_support"] == "strong":
+        texts.append("motion 并未正面回应你方可能主张的独立来源问题。")
+
+    motion_text = " ".join(texts)
+    add_history("原告 PI motion", motion_text)
+    spend_plaintiff(random.randint(1200, 2200))
+    g()["pi_motion_seen"] = True
+    g()["subphase_done"] = True
+
+def submit_pi_opposition(choice_key):
+    spend_client(ACTIONS_INFO[choice_key]["cost"])
+
+    mapping = {
+        "pi_attack_similarity": "你在 PI opposition 中主打相似性不足，强调客户作品与原告作品并未达到足以支持禁令的相似程度。",
+        "pi_attack_scope": "你在 PI opposition 中主张原告作品保护范围较薄，且市场上在先类似作品丰富。",
+        "pi_assert_independent_creation": "你在 PI opposition 中主张客户作品存在独立来源或供应商来源，削弱 copying from plaintiff 的叙事。",
+        "pi_attack_ownership": "你在 PI opposition 中攻击原告的权属与材料基础，主张其当前记录不足以支撑 PI。",
+    }
+
+    add_history("PI opposition", mapping[choice_key])
+    g()["pi_opposition_choice"] = choice_key
+    g()["subphase_done"] = True
+
+def compute_current_demand(stage):
+    hc = g()["hidden_case"]
+    base = hc["plaintiff_expected_recovery"]
+    opp = g()["opponent_key"]
+
+    if opp == "aggressive":
+        multiplier = 1.45
+    elif opp == "gray":
+        multiplier = 1.25
+    else:
+        multiplier = 1.05
+
+    demand = int(base * multiplier)
+
+    # 节点修正
+    if stage == "post_intake":
+        demand = int(demand * 1.05)
+    elif stage == "post_research":
+        demand = int(demand * 1.0)
+    elif stage == "post_mtd_win":
+        demand = int(demand * 0.15)
+    elif stage == "post_mtd_partial":
+        demand = int(demand * 0.7)
+    elif stage == "post_mtd_loss":
+        demand = int(demand * 1.25)
+    elif stage == "pre_pi":
+        demand = int(demand * 1.15)
+    elif stage == "post_pi_loss":
+        demand = int(demand * 1.35)
+    elif stage == "post_pi_limit":
+        demand = int(demand * 0.8)
+    elif stage == "post_pi_denied":
+        demand = int(demand * 0.2)
+
+    # 证据与实体修正
+    pi_score = compute_pi_merits_score()
+    demand += int((pi_score - 50) * 120)
+
+    if hc["evidence_issue"]:
+        demand -= 2500
+    if "线索：Illinois forum contacts 不明确" in g()["facts_known"]:
+        demand -= 1200
+    if "线索：测购材料存在缺口" in g()["facts_known"] or "线索：未见明确测购" in g()["facts_known"]:
+        demand -= 1500
+    if "线索：证据可能存在时间线问题" in g()["facts_known"]:
+        demand -= 1800
+
+    return max(0, demand)
+
+def trigger_demand(stage, label):
+    if stage in g()["demand_stage_seen"]:
+        return
+
+    demand = compute_current_demand(stage)
+    g()["current_demand"] = demand
+    g()["settlement_history"].append({
+        "stage": stage,
+        "label": label,
+        "demand": demand,
+    })
+    g()["demand_stage_seen"].add(stage)
+
+    add_history("原告报价", f"{label}：原告提出和解条件，要求支付 ${demand:,}。")
+
+def settlement_decision(action, counter_amount=None):
+    demand = g()["current_demand"]
+
+    if action == "accept":
+        end_with_outcome({
+            "title": "接受和解",
+            "kind": "中等结局" if demand > 5000 else "较好结局",
+            "score": 60,
+            "route": "接受原告报价",
+            "summary": f"你接受了原告当前报价，以 ${demand:,} 的金额结束案件。",
+        })
+        g()["outcome"]["liability"] = demand
+        return
+
+    if action == "counter":
+        g()["counter_offer_last"] = counter_amount
+
+        hc = g()["hidden_case"]
+        floor_price = int(hc["plaintiff_expected_recovery"] * 0.55)
+
+        if counter_amount >= floor_price:
+            end_with_outcome({
+                "title": "还价后和解",
+                "kind": "较好结局" if counter_amount <= demand * 0.75 else "中等结局",
+                "score": 66,
+                "route": "还价成功",
+                "summary": f"你提出 ${counter_amount:,} 的还价，原告最终接受，案件以该金额结案。",
+            })
+            g()["outcome"]["liability"] = counter_amount
+        else:
+            add_history("还价结果", f"你提出 ${counter_amount:,} 的还价，原告拒绝。当前报价仍为 ${demand:,}。")
+        return
+
+    if action == "reject":
+        add_history("拒绝报价", f"你拒绝了原告 ${demand:,} 的报价，决定继续推进案件。")
+
+def generate_pi_reply():
+    choice = g()["pi_opposition_choice"]
+
+    if choice == "pi_attack_similarity":
+        text = "原告 PI reply 强调两边在构图、角度和关键细节上的重合，试图把争议重新拉回到核心相似性。"
+    elif choice == "pi_attack_scope":
+        text = "原告 PI reply 主张其作品并非普通通用表达，而是具有独特组合与可受保护的选择安排。"
+    elif choice == "pi_assert_independent_creation":
+        text = "原告 PI reply 攻击你方所谓独立来源链条，主张该来源并未被完整、可信地证明。"
+    else:
+        text = "原告 PI reply 补强其权属和来源叙事，强调现有记录已足以支撑当前阶段的 PI。"
+
+    add_history("原告 PI reply", text)
+    spend_plaintiff(random.randint(900, 1600))
+    g()["pi_reply_seen"] = True
     g()["subphase_done"] = True
 
 def attempt_settlement():
@@ -1158,6 +1450,14 @@ def reveal_truths():
         f"冻结金额：约 ${hc['frozen_amount']:,}。",
         f"相关销售金额：约 ${hc['sales_amount']:,}。",
         f"原告初始获益预期：{hc['plaintiff_expectation']}",
+        f"原告心理价位中枢：约 ${hc['plaintiff_expected_recovery']:,}",
+        f"作品类型：{hc['work_type']}",
+        f"在先类似作品丰富程度：{hc['prior_art_density']}",
+        f"客户作品与原告作品相似度：{hc['similarity_to_claimed']}",
+        f"客户作品与在先市场类似作品相似度：{hc['similarity_to_prior_market']}",
+        f"独立来源支持：{hc['independent_creation_support']}",
+        f"原告权属清晰度：{hc['ownership_clarity']}",
+        f"PI 实体胜算强度：{compute_pi_merits_score()}",
         f"原告隐藏预算：约 ${max(hc['plaintiff_budget'], 0):,}（结局时口径）。",
         f"原告隐藏目标：{hc['plaintiff_goal']}。",
     ]
@@ -1172,28 +1472,66 @@ def next_phase_button():
     if ph == "research":
         return "进入策略阶段"
     if ph == "strategy":
-        return "进入正式出手阶段"
-    if ph == "motion":
-        return "查看对方 response"
-    if ph == "response":
-        return "进入 reply 阶段"
-    if ph == "reply":
-        return "等待法官裁决"
-    if ph == "ruling":
+        return "进入下一程序阶段"
+    if ph == "mtd_motion":
+        return "查看原告 opposition"
+    if ph == "mtd_opposition":
+        return "进入 MTD reply"
+    if ph == "mtd_reply":
+        return "等待 MTD 裁决"
+    if ph == "mtd_ruling":
+        return "进入 PI 主线"
+    if ph == "pi_motion":
+        return "进入 PI opposition"
+    if ph == "pi_opposition":
+        return "查看原告 PI reply"
+    if ph == "pi_reply":
+        return "等待 PI 裁决"
+    if ph == "pi_ruling":
         return "结算本局"
     return ""
 
 def advance_phase():
-    ph_order = ["intake", "investigation", "research", "strategy", "motion", "response", "reply", "ruling"]
     current = g()["phase"]
     if current == "ended":
         return
-    idx = ph_order.index(current)
-    if idx < len(ph_order) - 1:
-        g()["phase"] = ph_order[idx + 1]
-        g()["subphase_done"] = False
-        if g()["phase"] in ["investigation", "research", "strategy", "motion", "response", "reply", "ruling"]:
-            advance_round()
+
+    if current == "intake":
+        g()["phase"] = "investigation"
+    elif current == "investigation":
+        g()["phase"] = "research"
+    elif current == "research":
+        g()["phase"] = "strategy"
+    elif current == "strategy":
+        if g()["strategy"] == "mtd":
+            g()["phase"] = "mtd_motion"
+        else:
+            g()["phase"] = "pi_motion"
+    elif current == "mtd_motion":
+        g()["phase"] = "mtd_opposition"
+    elif current == "mtd_opposition":
+        g()["phase"] = "mtd_reply"
+    elif current == "mtd_reply":
+        g()["phase"] = "mtd_ruling"
+    elif current == "mtd_ruling":
+        g()["phase"] = "pi_motion"
+    elif current == "pi_motion":
+        g()["phase"] = "pi_opposition"
+    elif current == "pi_opposition":
+        g()["phase"] = "pi_reply"
+    elif current == "pi_reply":
+        g()["phase"] = "pi_ruling"
+    elif current == "pi_ruling":
+        g()["phase"] = "ended"
+
+    g()["subphase_done"] = False
+
+    if g()["phase"] in [
+        "investigation", "research", "strategy",
+        "mtd_motion", "mtd_opposition", "mtd_reply", "mtd_ruling",
+        "pi_motion", "pi_opposition", "pi_reply", "pi_ruling"
+    ]:
+        advance_round()
 
 def render_sidebar():
     st.sidebar.subheader("当前状态")
@@ -1240,6 +1578,26 @@ def render_phase():
     st.markdown("---")
     st.subheader(f"第 {g()['round']} 回合｜{phase_name()}")
     st.info(current_guidance())
+        if g().get("current_demand") is not None and g()["outcome"] is None:
+        st.markdown("### 原告当前报价")
+        st.warning(f"原告当前和解要求：${g()['current_demand']:,}")
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("接受报价", use_container_width=True, key=f"accept_{g()['phase']}"):
+                settlement_decision("accept")
+                st.rerun()
+        with c2:
+            if st.button("拒绝并继续打", use_container_width=True, key=f"reject_{g()['phase']}"):
+                settlement_decision("reject")
+                g()["current_demand"] = None
+                st.rerun()
+        with c3:
+            if st.button("自动还价 70%", use_container_width=True, key=f"counter_{g()['phase']}"):
+                settlement_decision("counter", int(g()["current_demand"] * 0.7))
+                if g()["outcome"] is None:
+                    g()["current_demand"] = None
+                st.rerun()
 
     st.markdown("### 可选动作")
     if st.button("尝试和解（立即推进谈判）", use_container_width=True, key="quick_settle"):
@@ -1351,23 +1709,26 @@ def render_phase():
                 advance_phase()
                 st.rerun()
 
-    elif ph == "motion":
-        disabled = g()["motion_filed"] or not can_pay(ACTIONS_INFO["file_motion"]["cost"])
+        elif ph == "mtd_motion":
+        disabled = g()["mtd_motion_filed"] or not can_pay(ACTIONS_INFO["file_motion"]["cost"])
         st.caption(f"成本：${ACTIONS_INFO['file_motion']['cost']:,}")
-        if st.button("提交动议 / 正式行动", disabled=disabled, use_container_width=True):
-            file_motion()
+        if st.button("提交 MTD", disabled=disabled, use_container_width=True):
+            spend_client(ACTIONS_INFO["file_motion"]["cost"])
+            spend_plaintiff(random.randint(1200, 2200))
+            g()["mtd_motion_filed"] = True
+            add_history("提交 MTD", "你正式提交了 Motion to Dismiss，核心围绕个人管辖与 forum linkage 展开。")
             forced_end_check()
             st.rerun()
 
-        if g()["motion_filed"]:
+        if g()["mtd_motion_filed"]:
             if st.button(next_phase_button(), use_container_width=True):
                 advance_phase()
                 st.rerun()
 
-    elif ph == "response":
-        if not g()["response_seen"]:
-            if st.button("查看对方 response", use_container_width=True):
-                generate_response()
+    elif ph == "mtd_opposition":
+        if not g()["mtd_opposition_seen"]:
+            if st.button("查看原告 opposition", use_container_width=True):
+                generate_mtd_opposition()
                 forced_end_check()
                 st.rerun()
         else:
@@ -1375,26 +1736,125 @@ def render_phase():
                 advance_phase()
                 st.rerun()
 
-    elif ph == "reply":
+    elif ph == "mtd_reply":
         cols = st.columns(3)
         reply_keys = ["reply_attack_timeline", "reply_attack_pj", "reply_narrow"]
         for i, k in enumerate(reply_keys):
             with cols[i]:
-                disabled = g()["reply_done"] or not can_pay(ACTIONS_INFO[k]["cost"])
+                disabled = g()["mtd_reply_done"] or not can_pay(ACTIONS_INFO[k]["cost"])
                 st.caption(f"成本：${ACTIONS_INFO[k]['cost']:,}")
-                if st.button(ACTIONS_INFO[k]["label"], key=k, disabled=disabled, use_container_width=True):
-                    submit_reply(k)
+                if st.button(ACTIONS_INFO[k]["label"], key=f"mtd_{k}", disabled=disabled, use_container_width=True):
+                    submit_mtd_reply(k)
                     forced_end_check()
                     st.rerun()
 
-        if g()["reply_done"]:
+        if g()["mtd_reply_done"]:
             if st.button(next_phase_button(), use_container_width=True):
                 advance_phase()
                 st.rerun()
 
-    elif ph == "ruling":
-        if st.button("查看裁决", use_container_width=True):
+    elif ph == "mtd_ruling":
+        if st.button("查看 MTD 裁决", use_container_width=True):
+            hc = g()["hidden_case"]
+            score = 0.25
+
+            if "线索：Illinois forum contacts 不明确" in g()["facts_known"]:
+                score += 0.26
+            if "线索：可能存在 Illinois forum contacts" in g()["facts_known"]:
+                score -= 0.25
+            if "线索：未见明确测购" in g()["facts_known"] or "线索：测购材料存在缺口" in g()["facts_known"]:
+                score += 0.12
+            if "线索：测购材料较完整" in g()["facts_known"]:
+                score -= 0.16
+            if "线索：证据可能存在时间线问题" in g()["facts_known"]:
+                score += 0.08
+            if "reply_choice" in g() and g()["reply_choice"] == "reply_attack_pj":
+                score += 0.08
+
+            score += JUDGE_PROFILES[g()["judge_key"]]["mtd_bonus"]
+
+            if score >= 0.72:
+                trigger_demand("post_mtd_win", "MTD 后报价")
+                end_with_outcome({
+                    "title": "Motion to Dismiss 获准",
+                    "kind": "胜利结局",
+                    "score": 94,
+                    "route": "程序性胜利",
+                    "summary": "法院接受了你的程序逻辑，认为现有记录不足以支撑本州个人管辖或至少不足以在当前阶段继续推进。",
+                })
+            else:
+                if score >= 0.58:
+                    text = "法院未完全终结案件，但接受了你的一部分程序性主张。原告随后转入 PI 主线继续推进。"
+                    g()["mtd_result"] = "partial"
+                    trigger_demand("post_mtd_partial", "MTD 后更新报价")
+                else:
+                    text = "法院未接受你的程序性切断请求。原告随后全面转入 PI 主线。"
+                    g()["mtd_result"] = "denied"
+                    trigger_demand("post_mtd_loss", "MTD 后更新报价")
+
+                add_history("MTD 裁决", text)
+                g()["phase"] = "pi_motion"
+                g()["subphase_done"] = False
+
+            forced_end_check()
+            st.rerun()
+
+    elif ph == "pi_motion":
+        if not g()["pi_motion_seen"]:
+            if st.button("查看原告 PI motion", use_container_width=True):
+                generate_pi_motion()
+                forced_end_check()
+                st.rerun()
+        else:
+            if st.button(next_phase_button(), use_container_width=True):
+                advance_phase()
+                st.rerun()
+
+    elif ph == "pi_opposition":
+        cols = st.columns(2)
+        pi_keys = [
+            "pi_attack_similarity",
+            "pi_attack_scope",
+            "pi_assert_independent_creation",
+            "pi_attack_ownership",
+        ]
+        for i, k in enumerate(pi_keys):
+            with cols[i % 2]:
+                disabled = g()["pi_opposition_choice"] is not None or not can_pay(ACTIONS_INFO[k]["cost"])
+                st.caption(f"成本：${ACTIONS_INFO[k]['cost']:,}")
+                if st.button(ACTIONS_INFO[k]["label"], key=f"pi_{k}", disabled=disabled, use_container_width=True):
+                    submit_pi_opposition(k)
+                    forced_end_check()
+                    st.rerun()
+
+        if g()["pi_opposition_choice"] is not None:
+            if st.button(next_phase_button(), use_container_width=True):
+                advance_phase()
+                st.rerun()
+
+    elif ph == "pi_reply":
+        if not g()["pi_reply_seen"]:
+            if st.button("查看原告 PI reply", use_container_width=True):
+                generate_pi_reply()
+                forced_end_check()
+                st.rerun()
+        else:
+            if st.button(next_phase_button(), use_container_width=True):
+                advance_phase()
+                st.rerun()
+
+    elif ph == "pi_ruling":
+        if st.button("查看 PI 裁决", use_container_width=True):
             evaluate_outcome()
+            g()["pi_result"] = g()["outcome"]["title"] if g()["outcome"] else None
+
+            if g()["outcome"] and g()["outcome"]["title"] == "禁令对抗失败":
+                trigger_demand("post_pi_loss", "PI 后最终报价")
+            elif g()["outcome"] and g()["outcome"]["title"] == "局部顶住禁令压力":
+                trigger_demand("post_pi_limit", "PI 后最终报价")
+            elif g()["outcome"] and g()["outcome"]["title"] == "禁令压力被显著削弱":
+                trigger_demand("post_pi_denied", "PI 后最终报价")
+
             forced_end_check()
             st.rerun()
 

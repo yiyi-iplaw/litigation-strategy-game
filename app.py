@@ -693,34 +693,69 @@ def compute_copyright_damages():
 
 def get_initial_position():
     hc = g()["hidden_case"]
+    merits = compute_pi_merits_score()
 
-    fact_score = 0.5
+    # 程序性事实分（对被告有利为高）
+    proc_score = 0.5
     if not hc["forum_sale"]:
-        fact_score += 0.2
+        proc_score += 0.2
     else:
-        fact_score -= 0.2
-
+        proc_score -= 0.2
     if not hc["test_buy"]:
-        fact_score += 0.2
+        proc_score += 0.2
     elif hc["test_buy_strength"] == "strong":
-        fact_score -= 0.2
+        proc_score -= 0.2
     else:
-        fact_score -= 0.05
-
+        proc_score -= 0.05
     if hc["evidence_issue"]:
-        fact_score += 0.2
+        proc_score += 0.2
+    proc_score = max(0, min(1, proc_score))
 
+    # 版权实体分（merits 低对被告有利）
+    # merits 0–100，转换为 0–1 的有利程度（越低越有利于被告）
+    merits_score = 1.0 - (merits / 100.0)
+
+    # 综合事实分：程序性和实体各占一半
+    fact_score = proc_score * 0.5 + merits_score * 0.5
     fact_score = max(0, min(1, fact_score))
+
     budget_score = max(0, min(1, g()["initial_client_budget"] / 10000))
 
     return {
         "fact_score": fact_score,
         "budget_score": budget_score,
         "fact_quad": "事实有利" if fact_score >= 0.5 else "事实不利",
-        "budget_quad": "预算高" if budget_score >= 0.5 else "预算低",
+        "budget_quad": "预算充足" if budget_score >= 0.5 else "预算有限",
     }
 
-def estimate_liability(outcome):
+def get_final_position(liability, cost_spent):
+    # 以实际赔偿金额描述终局
+    if liability < 0:
+        liability_quad = f"获赔 ${-liability:,}"
+    elif liability == 0:
+        liability_quad = "零赔偿"
+    elif liability <= 3000:
+        liability_quad = f"低额赔偿 ${liability:,}"
+    elif liability <= 15000:
+        liability_quad = f"中额赔偿 ${liability:,}"
+    else:
+        liability_quad = f"高额赔偿 ${liability:,}"
+
+    # 以实际律师费消耗描述
+    initial = g()["initial_client_budget"]
+    if cost_spent <= initial * 0.30:
+        cost_quad = f"律师费消耗较少（${cost_spent:,}）"
+    elif cost_spent <= initial * 0.65:
+        cost_quad = f"律师费消耗适中（${cost_spent:,}）"
+    else:
+        cost_quad = f"律师费消耗较多（${cost_spent:,}）"
+
+    return {
+        "liability_quad": liability_quad,
+        "cost_quad": cost_quad,
+    }
+
+
     title = outcome.get("title", "")
 
     # 零赔偿结局
@@ -2368,10 +2403,20 @@ def legal_analysis_text():
         "high_creativity_work": "具有较高创意性的图片作品",
     }
     work_label = work_labels.get(hc["work_type"], "产品图")
+
+    if merits < 35:
+        merits_desc = "版权实体主张较弱，原告在相似性、独特性或权属方面存在明显短板"
+    elif merits < 55:
+        merits_desc = "版权实体强度中等，双方在实体问题上各有一定依据"
+    elif merits < 70:
+        merits_desc = "版权实体对原告相对有利，但仍有可攻击的余地"
+    else:
+        merits_desc = "版权实体对原告明显有利，相似性高且独特性有一定支撑"
+
     analysis.append(
-        f"本局涉案版权作品为{work_label}，PI 实体胜算强度为 {merits}/100。"
-        f"原告{'有条件' if dmg['statutory_available'] else '无法'}主张法定赔偿，"
-        f"{'故意侵权认定成立' if dmg['willful'] else '本案未达到故意侵权标准'}。"
+        f"本局涉案版权作品为{work_label}，{merits_desc}。"
+        f"原告{'有条件' if dmg['statutory_available'] else '难以'}主张法定赔偿，"
+        f"{'故意侵权认定成立' if dmg['willful'] else '本案证据暂不支持故意侵权认定'}。"
     )
 
     # 程序性事实部分
@@ -2465,10 +2510,9 @@ def counterfactual_text():
 
     if route in pi_loss_routes:
         lines = []
-        # 反事实：如果玩家走了更激进的路线
         if strat in ["settle", "attrition"] or strat is None:
             lines.append(
-                f"本局 merits 较弱（{merits}/100），PI 本来就很难获批。"
+                "本局原告的版权实体主张较弱，PI 本来就很难获批。"
                 "如果你更早投入禁令防守路线，结局很可能一样好，但可以节省部分律师费。"
             )
         elif strat == "mtd" and not hc["forum_sale"]:
@@ -2478,7 +2522,7 @@ def counterfactual_text():
             )
         else:
             lines.append(
-                f"本局 PI 实体胜算只有 {merits}/100，原告的版权主张先天不足。"
+                "原告的版权主张先天不足，这局的胜算从一开始就偏向你方。"
                 "你选择的路线与底层事实基本吻合，但如果更早完成版权实体调查，"
                 "你会更有信心在关键节点加大投入。"
             )
@@ -2519,32 +2563,55 @@ def counterfactual_text():
         return "消耗战路线在本局有效，因为原告预算已经被显著压缩。如果更早触发主动出价机制，可能在更少律师费消耗的情况下取得相近结果。"
 
     if "禁令防守" in route:
-        return f"本局 merits 为 {merits}/100，禁令防守有事实基础。如果你在 PI opposition 阶段选择了更匹配底层事实的攻击路线，防守胜率会进一步提升。"
+        return "本局原告版权实体较弱，禁令防守具备事实基础。如果你在 PI opposition 阶段选择了更匹配底层事实的攻击路线，防守胜率会进一步提升。"
 
     return "回顾本局的关键决策节点：哪些调查和研究真正改变了你的判断？哪些操作在事后看是多余的成本？这些是下一局最有价值的参考。"
 
 def reveal_truths():
     hc = g()["hidden_case"]
+    dmg = compute_copyright_damages()
+
+    work_labels = {
+        "simple_product_photo": "普通白底产品图（创意性低，版权保护范围窄）",
+        "styled_product_image": "有风格化处理的产品图（创意性中等）",
+        "high_creativity_work": "具有较高创意性的图片作品（版权保护相对较强）",
+    }
+    prior_art_labels = {
+        "low": "市场上类似风格的在先作品较少",
+        "medium": "市场上存在一定数量的类似在先作品",
+        "high": "市场上大量存在类似风格的在先作品，原告保护范围受限",
+    }
+    sim_label = (
+        "两张图片相似度较高，原告相似性主张有支撑" if hc["similarity_to_claimed"] >= 70
+        else "两张图片存在一定相似，但差异点明显，有可攻击余地" if hc["similarity_to_claimed"] >= 45
+        else "两张图片相似度较低，相似性主张基础薄弱"
+    )
+    origin_labels = {
+        "strong": "客户图片有完整的独立来源记录，可成立独立创作抗辩",
+        "weak": "客户图片来源记录不完整，独立来源抗辩基础较弱",
+        "none": "客户无法提供图片来源证明，独立来源抗辩几乎无法成立",
+    }
+    ownership_labels = {
+        "clear": "原告版权登记链条清晰，权属基础较难攻击",
+        "questionable": "原告版权登记存在若干模糊之处，权属有一定攻击余地",
+        "weak": "原告版权登记存在明显漏洞，权属基础可作为主要攻击方向",
+    }
+
     truths = [
-        f"底层事实：{'存在' if hc['forum_sale'] else '不存在'} Illinois 订单。",
-        f"底层事实：{'存在' if hc['test_buy'] else '不存在'}测购。",
-        f"测购强度：{hc['test_buy_strength'] if hc['test_buy'] else '无'}。",
-        f"底层事实：原告材料{'存在' if hc['evidence_issue'] else '不存在'}时间线/来源异常。",
-        f"冻结金额：约 ${hc['frozen_amount']:,}。",
-        f"相关销售金额：约 ${hc['sales_amount']:,}。",
-        f"原告初始获益预期：{hc['plaintiff_expectation']}",
-        f"原告心理价位中枢：约 ${hc['plaintiff_expected_recovery']:,}",
-        f"作品类型：{hc['work_type']}",
-        f"在先类似作品丰富程度：{hc['prior_art_density']}",
-        f"客户作品与原告作品相似度：{hc['similarity_to_claimed']}",
-        f"客户作品与在先市场类似作品相似度：{hc['similarity_to_prior_market']}",
-        f"独立来源支持：{hc['independent_creation_support']}",
-        f"原告权属清晰度：{hc['ownership_clarity']}",
-        f"PI 实体胜算强度：{compute_pi_merits_score()}",
-        f"原告隐藏预算：约 ${max(hc['plaintiff_budget'], 0):,}（结局时口径）。",
-        f"原告隐藏目标：{hc['plaintiff_goal']}。",
-        f"原告初始报价策略：{g().get('plaintiff_demand_strategy', '未触发')}。",
-        f"原告初始报价锚点：${g().get('plaintiff_initial_demand', 0):,}。",
+        f"Illinois 订单：{'案件底层存在 Illinois 订单记录' if hc['forum_sale'] else '案件底层不存在 Illinois 订单，程序抗辩具备事实基础'}。",
+        f"测购情况：{'原告掌握完整的 Illinois 测购记录' if (hc['test_buy'] and hc['test_buy_strength'] == 'strong') else '原告测购记录存在缺口，支撑不足' if hc['test_buy'] else '原告无 Illinois 测购记录'}。",
+        f"证据材料：{'原告证据材料存在时间线或来源链条异常，是本案重要攻击点' if hc['evidence_issue'] else '原告证据材料无明显时间线问题'}。",
+        f"涉案作品：{work_labels.get(hc['work_type'], hc['work_type'])}。",
+        f"在先作品：{prior_art_labels.get(hc['prior_art_density'], hc['prior_art_density'])}。",
+        f"相似度评估：{sim_label}。",
+        f"独立来源：{origin_labels.get(hc['independent_creation_support'], hc['independent_creation_support'])}。",
+        f"权属情况：{ownership_labels.get(hc['ownership_clarity'], hc['ownership_clarity'])}。",
+        f"被冻结金额：约 ${hc['frozen_amount']:,}。",
+        f"涉案产品销售金额：约 ${hc['sales_amount']:,}。",
+        f"原告实际可主张赔偿上限：约 ${dmg['chosen_amount']:,}（{'法定赔偿路径' if dmg['chosen_path'] == 2 else '实际损害路径'}）。",
+        f"{'故意侵权认定成立，原告可主张法定赔偿上限 $150,000。' if dmg['willful'] else '本案未达到故意侵权标准。'}",
+        f"原告隐藏预算：约 ${max(hc['plaintiff_budget'], 0):,}（本局结束时口径）。",
+        f"原告诉讼目标：{'尽快冻结账号' if hc['plaintiff_goal'] == 'freeze_fast' else '争取快速和解' if hc['plaintiff_goal'] == 'settle_fast' else '持续向被告施压'}。",
     ]
     return truths
 
@@ -3167,13 +3234,13 @@ def render_result():
             st.caption("法定赔偿路径：不可用（原告登记存疑）")
         st.caption(f"原告适用路径：{dmg['chosen_label']}，主张金额 ${dmg['chosen_amount']:,}")
 
-    st.markdown("### 位置变化")
+    st.markdown("### 位置对比")
     if "initial_position" in out:
-        st.write(f"初始位置：**{out['initial_position']['budget_quad']} × {out['initial_position']['fact_quad']}**")
+        ip = out["initial_position"]
+        st.write(f"起始条件：**{ip['budget_quad']}，{ip['fact_quad']}**")
     if "final_position" in out:
-        st.write(f"终局位置：**{out['final_position']['cost_quad']} × {out['final_position']['liability_quad']}**")
-    if "performance_delta" in out:
-        st.caption(f"表现差值：{out['performance_delta']}")
+        fp = out["final_position"]
+        st.write(f"最终结果：**{fp['liability_quad']}，{fp['cost_quad']}**")
 
     st.markdown("### 路线结论")
     st.write(f"本局的实际终局路线：**{out['route']}**")
@@ -3188,14 +3255,9 @@ def render_result():
     st.markdown("### 如果你换一条路")
     st.write(counterfactual_text())
 
-    st.markdown("### 结局时揭晓的标准答案")
+    st.markdown("### 结局揭晓")
     for x in reveal_truths():
         st.write(f"• {x}")
-
-    if "path_scores" in g():
-        st.markdown("### 各路线结算倾向")
-        for k, v in g()["path_scores"].items():
-            st.write(f"• {k}: {round(v, 3)}")
 
     st.markdown("### 剧情记录")
     for item in reversed(g()["history"]):

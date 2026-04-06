@@ -163,40 +163,49 @@ FACT_TEMPLATES = {
 
 COMPLAINT_BLOCKS = {
     "jurisdiction_strong": [
-        "Plaintiff alleges that Defendant sold products into Illinois and refers to several Illinois-directed transactions.",
-        "Complaint states that Defendant made sales into Illinois and identifies multiple transactions allegedly tied to Illinois consumers.",
+        "起诉状称 Defendant 向 Illinois 销售了被诉产品，并提到数笔指向 Illinois consumers 的交易。",
+        "Complaint 主张 Defendant 在 Illinois 存在销售行为，并列出若干 allegedly tied to Illinois consumers 的交易。",
+        "起诉状称 Plaintiff 已识别出多笔 Illinois-directed transactions，并据此主张 forum contacts 成立。",
     ],
     "jurisdiction_weak": [
-        "Complaint refers to nationwide online availability, but does not clearly identify Illinois transactions.",
-        "Plaintiff alleges forum contacts in general terms, without clearly setting out specific Illinois transactions.",
+        "起诉状提到 nationwide online availability，但没有明确列出 Illinois transactions。",
+        "Complaint 仅以较概括方式主张 forum contacts，未清楚展开具体的 Illinois sales。",
+        "起诉状泛泛提到 Illinois market，但没有明确写出订单编号、收货地址或具体 Illinois transactions。",
     ],
     "testbuy_strong": [
-        "Plaintiff states it conducted an Illinois test purchase and includes an order page, shipping details, and an order identifier.",
-        "The pleading describes a completed Illinois test buy with screenshots reflecting order and delivery information.",
+        "起诉状称 Plaintiff 完成了一次 Illinois test buy，并附有 order page、shipping details 及 order identifier。",
+        "Complaint 描述了一次 completed Illinois test buy，并附有 screenshots 反映下单及收货信息。",
+        "起诉状称 Plaintiff 进行了 Illinois test purchase，相关附件包含 order number、delivery information 和页面截图。",
     ],
     "testbuy_weak": [
-        "Plaintiff states that it conducted a test purchase, but the pleading does not clearly identify an order number or shipping confirmation.",
-        "The complaint refers to a supposed Illinois test buy, but the supporting detail is limited.",
+        "起诉状提到 Plaintiff 做过 test purchase，但未清楚列出 order number 或 shipping confirmation。",
+        "Complaint 提到一次 supposed Illinois test buy，但 supporting detail 较为有限。",
+        "起诉状称有 Illinois test buy，但附件中对下单时间、订单编号及收货信息的展示并不完整。",
     ],
     "testbuy_none": [
-        "The complaint does not clearly attach a completed Illinois test purchase record.",
-        "No complete Illinois test purchase record appears on the face of the pleading.",
+        "起诉状表面上没有附出完整的 Illinois test purchase record。",
+        "Complaint 中未见完整的 Illinois test buy 凭证。",
+        "现有 pleading 没有清楚展示 completed Illinois test purchase 的完整记录。",
     ],
     "urgency_high": [
-        "Plaintiff emphasizes ongoing sales, platform risk, and the possibility of continuing harm absent immediate relief.",
-        "The complaint repeatedly stresses continuing sales and irreparable harm tied to platform exposure.",
+        "起诉状反复强调 ongoing sales、platform risk，以及 absent immediate relief 时 continuing harm 的可能性。",
+        "Complaint 多次主张 irreparable harm，并将其与 platform exposure 和 continuing sales 绑定。",
+        "起诉状将 ongoing infringement、platform risk 和 immediate relief 的必要性反复并列强调。",
     ],
     "urgency_mid": [
-        "Plaintiff asserts continuing harm and requests immediate relief, though the discussion of urgency is relatively brief.",
-        "The pleading invokes ongoing harm and platform risk, but the urgency allegations are not especially detailed.",
+        "起诉状主张 continuing harm 并请求 immediate relief，但对 urgency 的展开相对简短。",
+        "Complaint 提到 ongoing harm 和 platform risk，但 urgency allegations 本身并不算特别详细。",
+        "起诉状要求紧急救济，但对 irreparable harm 的展开篇幅有限。",
     ],
     "evidence_strong": [
-        "Attached exhibits include screenshots, product comparisons, and transaction-related images.",
-        "The pleading is accompanied by screenshots and image-based exhibits that purport to support the allegations.",
+        "附件中包含 screenshots、product comparisons 以及 transaction-related images。",
+        "Complaint 随附多张 image-based exhibits，试图支撑其 infringement allegations。",
+        "起诉状附件含有 screenshots、对比图及若干与 transaction 相关的图片材料。",
     ],
     "evidence_weak": [
-        "Some screenshots appear cropped, and the exhibits do not obviously reveal full source information.",
-        "The exhibits include screenshots, but they do not clearly disclose full metadata or source context.",
+        "部分 screenshots 看起来经过裁剪，exhibits 并未明显展示完整 source information。",
+        "附件中虽有 screenshots，但未清楚呈现完整 metadata 或 source context。",
+        "起诉状虽附有图片材料，但部分 exhibits 的 source context 和 metadata 展示不充分。",
     ],
 }
 

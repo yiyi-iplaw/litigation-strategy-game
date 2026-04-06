@@ -322,19 +322,43 @@ def forced_end_check():
     if g()["outcome"] is not None:
         return
 
-    if g()["client_budget"] <= 0:
-        g()["outcome"] = {
-            "title": "代理终止 / 缺席判决",
-            "kind": "失败结局",
-            "score": 8,
-            "route": "客户预算耗尽",
-            "summary": (
-                "随着费用持续消耗，客户明确表示无法继续承担后续律师费用。"
-                "你被迫退出代理。案件随后进入无人应诉状态，原告申请 default judgment 并获得支持。"
-            ),
-        }
-        g()["phase"] = "ended"
-        return
+    min_future_cost = 999999
+
+phase_min_cost = {
+    "intake": 300,
+    "investigation": 1500,
+    "research": 800,
+    "strategy": 500,
+    "motion": 1500,
+    "response": 0,
+    "reply": 700,
+    "ruling": 0,
+}
+
+current_phase = g()["phase"]
+if current_phase in phase_min_cost:
+    min_future_cost = phase_min_cost[current_phase]
+
+if (
+    g()["client_budget"] <= 0
+    or (
+        g()["outcome"] is None
+        and current_phase not in ["response", "ruling", "ended"]
+        and g()["client_budget"] < min_future_cost
+    )
+):
+    g()["outcome"] = {
+        "title": "代理终止 / 缺席判决",
+        "kind": "失败结局",
+        "score": 8,
+        "route": "客户预算耗尽",
+        "summary": (
+            "随着费用持续消耗，客户明确表示无法继续承担后续律师费用。"
+            "你被迫退出代理。案件随后进入无人应诉状态，原告申请 default judgment 并获得支持。"
+        ),
+    }
+    g()["phase"] = "ended"
+    return
 
     if g()["hidden_case"]["plaintiff_budget"] <= 0:
         g()["outcome"] = {

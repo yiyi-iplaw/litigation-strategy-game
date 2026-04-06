@@ -1306,13 +1306,17 @@ def choose_strategy(strategy_key):
     add_history("确定策略路线", info[strategy_key])
     g()["subphase_done"] = True
 
-def file_motion():
+def file_motion(forced_strategy=None):
     spend_client(ACTIONS_INFO["file_motion"]["cost"])
     spend_plaintiff(random.randint(1200, 2200))
-    g()["mtd_motion_filed"] = True
 
-    if g()["strategy"] is None:
+    if forced_strategy:
+        g()["strategy"] = forced_strategy
+    elif g()["strategy"] is None:
         g()["strategy"] = "mtd"
+
+    if g()["strategy"] == "mtd":
+        g()["mtd_motion_filed"] = True
 
     mapping = {
         "mtd": "你正式提交了 Motion to Dismiss，核心围绕个人管辖与 forum linkage 展开。",
@@ -1564,23 +1568,6 @@ def settlement_decision(action, counter_amount=None):
 
     if action == "reject":
         add_history("拒绝报价", f"你拒绝了原告 ${demand:,} 的报价，决定继续推进案件。")
-
-def generate_pi_reply():
-    choice = g()["pi_opposition_choice"]
-
-    if choice == "pi_attack_similarity":
-        text = "原告 PI reply 强调两边在构图、角度和关键细节上的重合，试图把争议重新拉回到核心相似性。"
-    elif choice == "pi_attack_scope":
-        text = "原告 PI reply 主张其作品并非普通通用表达，而是具有独特组合与可受保护的选择安排。"
-    elif choice == "pi_assert_independent_creation":
-        text = "原告 PI reply 攻击你方所谓独立来源链条，主张该来源并未被完整、可信地证明。"
-    else:
-        text = "原告 PI reply 补强其权属和来源叙事，强调现有记录已足以支撑当前阶段的 PI。"
-
-    add_history("原告 PI reply", text)
-    spend_plaintiff(random.randint(900, 1600))
-    g()["pi_reply_seen"] = True
-    g()["subphase_done"] = True
 
 def attempt_settlement():
     stage = f"{g()['phase']}_manual"
@@ -2221,8 +2208,7 @@ def render_phase():
             st.caption(f"成本：${ACTIONS_INFO['file_motion']['cost']:,}")
             if st.button("直接提交 MTD（程序性抗辩）", use_container_width=True, key="jump_mtd"):
                 if can_pay(ACTIONS_INFO["file_motion"]["cost"]):
-                    file_motion()
-                    g()["strategy"] = g()["strategy"] or "mtd"
+                    file_motion(forced_strategy="mtd")
                     g()["phase"] = "mtd_motion"
                     g()["mtd_motion_filed"] = True
                     g()["subphase_done"] = False
@@ -2234,8 +2220,7 @@ def render_phase():
             st.caption(f"成本：${ACTIONS_INFO['file_motion']['cost']:,}")
             if st.button("直接应对 PI（跳至 PI opposition）", use_container_width=True, key="jump_pi"):
                 if can_pay(ACTIONS_INFO["file_motion"]["cost"]):
-                    file_motion()
-                    g()["strategy"] = g()["strategy"] or "inj"
+                    file_motion(forced_strategy="inj")
                     g()["phase"] = "pi_motion"
                     g()["subphase_done"] = False
                     forced_end_check()
@@ -2314,6 +2299,7 @@ def render_phase():
                 st.rerun()
 
     elif ph == "research":
+        st.caption("程序法研究")
         cols = st.columns(3)
         action_keys = ["research_pj", "research_inj", "research_settle"]
         for i, k in enumerate(action_keys):
@@ -2330,7 +2316,19 @@ def render_phase():
                     forced_end_check()
                     st.rerun()
 
-        if used("research_pj") or used("research_inj") or used("research_settle"):
+        st.caption("版权实体研究")
+        st.info(
+            f"当前赔偿风险参考（基于案件底层设定）：实际损害路径 ${compute_copyright_damages()['path1']:,}｜"
+            f"法定赔偿路径 ${compute_copyright_damages()['path2']:,}｜"
+            f"原告可能主张金额 ${compute_copyright_damages()['chosen_amount']:,}"
+        )
+        dmg_preview = compute_copyright_damages()
+        willful_text = "当前底层事实满足故意侵权认定条件，法定赔偿上限可达 $150,000。" if dmg_preview["willful"] else "当前底层事实暂不满足故意侵权认定，法定赔偿适用普通档位。"
+        stat_text = "原告登记有效，可主张法定赔偿。" if dmg_preview["statutory_available"] else "原告登记存疑，法定赔偿路径受限。"
+        st.caption(f"{willful_text} {stat_text}")
+
+        all_research_keys = action_keys
+        if any(used(k) for k in all_research_keys):
             if st.button(next_phase_button(), use_container_width=True):
                 advance_phase()
                 st.rerun()

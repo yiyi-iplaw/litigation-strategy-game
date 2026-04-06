@@ -2005,21 +2005,35 @@ def render_phase():
         attempt_settlement()
         st.rerun()
 
-    if g()["phase"] not in ["mtd_opposition", "mtd_reply", "mtd_ruling", "pi_motion", "pi_reply", "pi_ruling", "ended"]:
-        if st.button("立即提交动议（跳过当前阶段）", use_container_width=True, key="jump_motion"):
-            if can_pay(ACTIONS_INFO["file_motion"]["cost"]):
-                file_motion()
-                strategy = g().get("strategy") or "mtd"
-                if strategy == "mtd":
+    early_phases = ["intake", "investigation", "research", "strategy"]
+    if g()["phase"] in early_phases:
+        st.markdown("#### 跳过准备阶段直接出手")
+        jcol1, jcol2 = st.columns(2)
+        with jcol1:
+            st.caption(f"成本：${ACTIONS_INFO['file_motion']['cost']:,}")
+            if st.button("直接提交 MTD（程序性抗辩）", use_container_width=True, key="jump_mtd"):
+                if can_pay(ACTIONS_INFO["file_motion"]["cost"]):
+                    file_motion()
+                    g()["strategy"] = g()["strategy"] or "mtd"
                     g()["phase"] = "mtd_motion"
                     g()["mtd_motion_filed"] = True
+                    g()["subphase_done"] = False
+                    forced_end_check()
+                    st.rerun()
                 else:
+                    st.warning("预算不足。")
+        with jcol2:
+            st.caption(f"成本：${ACTIONS_INFO['file_motion']['cost']:,}")
+            if st.button("直接应对 PI（跳至 PI opposition）", use_container_width=True, key="jump_pi"):
+                if can_pay(ACTIONS_INFO["file_motion"]["cost"]):
+                    file_motion()
+                    g()["strategy"] = g()["strategy"] or "inj"
                     g()["phase"] = "pi_motion"
-                g()["subphase_done"] = False
-                forced_end_check()
-                st.rerun()
-            else:
-                st.warning("预算不足，无法立即提交动议。")
+                    g()["subphase_done"] = False
+                    forced_end_check()
+                    st.rerun()
+                else:
+                    st.warning("预算不足。")
 
     ph = g()["phase"]
 

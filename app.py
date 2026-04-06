@@ -1069,6 +1069,7 @@ if "game" not in st.session_state:
     init_game()
 
 st.title("⚖️ 美国诉讼模拟 Demo")
+st.caption("LawMay P.C. 出品｜测试版")
 st.caption("一个最小可玩的回合制诉讼策略 demo。系统只给材料，不给评价。标准答案只在结局揭晓。")
 
 top1, top2 = st.columns(2)

@@ -598,16 +598,16 @@ def compute_pi_merits_score():
 
 def is_willful_infringement():
     hc = g()["hidden_case"]
+    # 登记存在明显漏洞时，被告可主张不知情，不应认定故意侵权
+    if hc["ownership_clarity"] == "weak":
+        return False
     criteria = 0
-    # 高度相似且无可信独立来源，是故意侵权的核心指标
     if hc["similarity_to_claimed"] >= 70:
         criteria += 1
     if hc["independent_creation_support"] == "none":
         criteria += 1
-    # 市场无类似在先作品，被告难以主张来源于其他渠道
     if hc["prior_art_density"] == "low":
         criteria += 1
-    # 玩家调查结论也纳入：若调查到相似度高，额外加权
     fk_str = " ".join(g().get("facts_known", []))
     if "相似程度较高" in fk_str or "正面否认相似性的空间较窄" in fk_str:
         criteria += 1
@@ -2545,9 +2545,19 @@ def counterfactual_text():
         return "程序性胜利需要前期充分的 forum contacts 调查作为支撑。如果你跳过了部分程序性调查就直接提交 MTD，胜率会明显下降。"
 
     if "缺席判决" in route:
+        initial = g().get("plaintiff_initial_demand", 0)
+        liability = out.get("liability", 0)
+        cost_spent = out.get("cost_spent", 0)
+        actual_total = liability + cost_spent
+        if initial and actual_total < initial:
+            return (
+                f"律师费耗尽导致缺席应诉，但期间的抗辩已经把判决金额从原告初始主张的 ${initial:,} 压低到 ${liability:,}，"
+                f"实际总成本 ${actual_total:,} 仍远低于完全不应诉的预期结果。"
+                "本局真正可以改进的地方在于预算管理：在律师费耗尽前识别出某个合适的报价节点接受和解，可能以更低的总成本结案。"
+            )
         return (
-            f"律师费耗尽是本局最可避免的失败。原告初始报价 ${g().get('plaintiff_initial_demand', 0):,}，"
-            "而你最终承担的赔偿和律师费总和远高于此。在预算耗尽前的任何一个报价节点接受和解，都会比这个结局更好。"
+            "律师费耗尽后缺席应诉是本局最需要避免的结局。"
+            "应当在预算耗尽前寻找合适的报价节点接受和解，而不是等到失去主动权。"
         )
 
     if "和解" in route or "砍价" in route:
@@ -3173,9 +3183,10 @@ def render_result():
     cost_spent = out.get("cost_spent", max(0, g()["initial_client_budget"] - g()["client_budget"]))
     actual_total = liability + cost_spent if liability >= 0 else cost_spent + liability
 
-    # 参照基准：原告第一轮报价
-    first_demand = None
-    if g()["settlement_history"]:
+    # 参照基准：优先用原告锚定报价，fallback 到 settlement_history 第一条
+    first_demand = g().get("plaintiff_initial_demand")
+    first_label = "原告初始锚定报价"
+    if first_demand is None and g()["settlement_history"]:
         first_demand = g()["settlement_history"][0]["demand"]
         first_label = g()["settlement_history"][0].get("label", "原告初始报价")
 
@@ -3195,8 +3206,10 @@ def render_result():
         else:
             st.metric("实际总成本", f"${actual_total:,}")
 
+    is_losing = out.get("kind", "") in ["失败结局"]
+
     if first_demand is not None:
-        st.markdown("#### 与初始报价对比")
+        st.markdown("#### 与原告初始报价对比")
         saved = first_demand - actual_total
         col_a, col_b, col_c = st.columns(3)
         with col_a:
@@ -3211,10 +3224,21 @@ def render_result():
                 st.metric("节省金额", "$0", delta="与初始报价持平")
             else:
                 st.metric("超出初始报价", f"${-saved:,}", delta=f"超出 {-saved/first_demand:.0%}", delta_color="inverse")
-        if saved > 0:
-            st.success(f"你通过持续应诉，比直接接受初始报价节省了 ${saved:,}，覆盖了律师费并有节余。" if saved > cost_spent
-                      else f"你通过持续应诉，比直接接受初始报价节省了 ${saved:,}。律师费消耗 ${cost_spent:,}，净节省 ${saved - cost_spent:,}。" if saved > 0
-                      else "")
+
+        # 结论文字：根据结局性质区分
+        if is_losing and "缺席判决" in out.get("route", ""):
+            if saved > 0:
+                st.info(f"尽管以缺席判决告终，期间的应诉抗辩已将判决金额从原告初始主张 ${first_demand:,} 压低，实际总成本 ${actual_total:,} 仍低于完全不应诉的预期结果。预算管理是本局的核心问题。")
+            else:
+                st.error(f"实际总成本超出了原告初始报价 ${-saved:,}。预算管理和应诉策略均需改进。")
+        elif is_losing and saved > 0:
+            st.warning(f"尽管实际成本（${actual_total:,}）低于原告初始报价（${first_demand:,}），本局仍以失败结局告终。更早接受和解可能是更优选择。")
+        elif is_losing and saved <= 0:
+            st.error(f"实际总成本超出了原告初始报价 ${-saved:,}。如果当初接受初始报价，总成本会低得多。")
+        elif saved > cost_spent:
+            st.success(f"你通过持续应诉，比直接接受初始报价节省了 ${saved:,}，扣除律师费后净节省 ${saved - cost_spent:,}。")
+        elif saved > 0:
+            st.success(f"你通过持续应诉，比直接接受初始报价节省了 ${saved:,}。律师费消耗 ${cost_spent:,}，净节省 ${saved - cost_spent:,}。")
         elif saved < 0:
             st.warning(f"实际总成本超出了原告初始报价 ${-saved:,}。如果当初接受初始报价，总成本会更低。")
 

@@ -352,6 +352,22 @@ def spend_plaintiff(cost):
 def can_pay(cost):
     return g()["client_budget"] >= cost
 
+def apply_budget_adjusted_score(outcome):
+    spent = max(0, g()["initial_client_budget"] - g()["client_budget"])
+    spend_ratio = spent / max(g()["initial_client_budget"], 1)
+
+    # 花得越少，加分越高；最多加 15 分
+    budget_bonus = round((1 - spend_ratio) * 15)
+
+    outcome["base_score"] = outcome["score"]
+    outcome["budget_bonus"] = budget_bonus
+    outcome["score"] = max(1, min(99, outcome["score"] + budget_bonus))
+    return outcome
+
+def end_with_outcome(outcome):
+    g()["outcome"] = apply_budget_adjusted_score(outcome)
+    g()["phase"] = "ended"
+
 def risk_text(v):
     if v < 35:
         return "低"
@@ -430,7 +446,7 @@ def forced_end_check():
             and g()["client_budget"] < min_future_cost
         )
     ):
-        g()["outcome"] = {
+        end_with_outcome({
             "title": "代理终止 / 缺席判决",
             "kind": "失败结局",
             "score": 8,
@@ -439,12 +455,11 @@ def forced_end_check():
                 "随着费用持续消耗，客户明确表示无法继续承担后续律师费用。"
                 "你被迫退出代理。案件随后进入无人应诉状态，原告申请 default judgment 并获得支持。"
             ),
-        }
-        g()["phase"] = "ended"
+        })
         return
 
     if g()["hidden_case"]["plaintiff_budget"] <= 0:
-        g()["outcome"] = {
+        end_with_outcome({
             "title": "原告撤回推进",
             "kind": "胜利结局",
             "score": 86,
@@ -452,8 +467,7 @@ def forced_end_check():
             "summary": (
                 "对方未能继续维持推进强度。其后续补充材料和程序动作逐渐停滞，案件最终被主动撤回或停止推进。"
             ),
-        }
-        g()["phase"] = "ended"
+        })
         return
 
 def advance_round():
@@ -645,19 +659,59 @@ def generate_response():
     g()["response_seen"] = True
     g()["subphase_done"] = True
 
-def submit_reply(reply_key):
-    spend_client(ACTIONS_INFO[reply_key]["cost"])
-    if reply_key == "reply_attack_timeline":
-        text = rand_choice(random.Random(g()["seed"] + 311), "reply_attack_timeline")
-    elif reply_key == "reply_attack_pj":
-        text = rand_choice(random.Random(g()["seed"] + 331), "reply_attack_pj")
-    else:
-        text = rand_choice(random.Random(g()["seed"] + 351), "reply_narrow")
+def attempt_settlement():
+    fk = g()["facts_known"]
+    hc = g()["hidden_case"]
+    round_num = g()["round"]
 
-    add_history("我方 reply", text)
-    g()["reply_done"] = True
-    g()["reply_choice"] = reply_key
-    g()["subphase_done"] = True
+    score = 0.40
+
+    # 有利因素
+    if "线索：Illinois forum contacts 不明确" in fk:
+        score += 0.20
+    if "线索：测购材料存在缺口" in fk or "线索：未见明确测购" in fk:
+        score += 0.15
+    if "线索：证据可能存在时间线问题" in fk:
+        score += 0.20
+    if hc["plaintiff_budget"] <= 5000:
+        score += 0.25
+    if round_num >= 3:
+        score += 0.08
+
+    # 不利因素
+    if round_num == 1:
+        score -= 0.18
+    if "线索：可能存在 Illinois forum contacts" in fk:
+        score -= 0.20
+    if "线索：测购材料较完整" in fk:
+        score -= 0.15
+
+    if score >= 0.75:
+        outcome = {
+            "title": "低价和解成功",
+            "kind": "较好结局",
+            "score": 78,
+            "route": "和解压价成功",
+            "summary": "你利用已有信息和程序压力压低了对方预期，以较低成本结束案件。",
+        }
+    elif score >= 0.55:
+        outcome = {
+            "title": "中等和解",
+            "kind": "中等结局",
+            "score": 60,
+            "route": "和解收尾",
+            "summary": "你成功推动和解，但条件并不算理想。",
+        }
+    else:
+        outcome = {
+            "title": "和解条件不佳",
+            "kind": "失败结局",
+            "score": 34,
+            "route": "谈判失败",
+            "summary": "你在不利时点提出和解，对方没有给出合理条件。",
+        }
+
+    end_with_outcome(outcome)
 
 def attempt_settlement():
     fk = g()["facts_known"]
@@ -914,8 +968,7 @@ def evaluate_outcome():
             }
 
     g()["path_scores"] = path_scores
-    g()["outcome"] = out
-    g()["phase"] = "ended"
+    end_with_outcome(out)
 
 def legal_analysis_text():
     hc = g()["hidden_case"]
@@ -1077,9 +1130,20 @@ def render_phase():
     st.info(current_guidance())
 
     st.markdown("### 可选动作")
-    if st.button("尝试和解（立即推进谈判）", use_container_width=True):
+    if st.button("尝试和解（立即推进谈判）", use_container_width=True, key="quick_settle"):
         attempt_settlement()
         st.rerun()
+
+    if g()["phase"] not in ["response", "reply", "ruling", "ended"]:
+        if st.button("立即提交动议（跳过当前阶段）", use_container_width=True, key="jump_motion"):
+            if can_pay(ACTIONS_INFO["file_motion"]["cost"]):
+                file_motion()
+                g()["phase"] = "response"
+                g()["subphase_done"] = False
+                forced_end_check()
+                st.rerun()
+            else:
+                st.warning("预算不足，无法立即提交动议。")
 
     ph = g()["phase"]
 
@@ -1228,6 +1292,9 @@ def render_result():
         st.error(f"{out['title']}｜{out['kind']}｜评分 {out['score']}")
 
     st.write(out["summary"])
+
+    if "base_score" in out:
+        st.caption(f"基础结果分：{out['base_score']}｜预算效率加分：+{out.get('budget_bonus', 0)}")
 
     st.markdown("### 路线结论")
     st.write(f"本局的实际终局路线：**{out['route']}**")

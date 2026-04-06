@@ -590,9 +590,6 @@ def estimate_liability(outcome):
     title = outcome.get("title", "")
     hc = g()["hidden_case"]
 
-    if "liability" in outcome:
-        return outcome["liability"]
-
     base_ranges = {
         "代理终止 / 缺席判决": (26000, 32000),
         "原告撤回推进": (0, 0),
@@ -608,7 +605,22 @@ def estimate_liability(outcome):
         "原告推进崩塌": (0, 0),
         "对方推进明显放缓": (2000, 7000),
         "消耗战未奏效": (12000, 22000),
+        "最终和解": (0, 0),
+        "还价后和解": (0, 0),
     }
+
+    # 零赔偿结局直接返回，不叠加任何修正
+    zero_liability_outcomes = {
+        "原告撤回推进",
+        "Motion to Dismiss 获准",
+        "原告推进崩塌",
+    }
+    if title in zero_liability_outcomes:
+        return 0
+
+    # 和解结局的赔偿由调用方直接传入 liability，estimate_liability 不应覆盖
+    if "liability" in outcome:
+        return outcome["liability"]
 
     low, high = base_ranges.get(title, (8000, 16000))
     liability = (low + high) // 2
@@ -649,7 +661,12 @@ def estimate_liability(outcome):
     return liability
 
 def get_final_position(liability, cost_spent):
-    liability_quad = "赔偿低" if liability <= 5000 else "赔偿高"
+    if liability == 0:
+        liability_quad = "赔偿为零"
+    elif liability <= 5000:
+        liability_quad = "赔偿低"
+    else:
+        liability_quad = "赔偿高"
     cost_quad = "消耗低" if cost_spent <= g()["initial_client_budget"] * 0.5 else "消耗高"
 
     return {
@@ -1426,8 +1443,8 @@ def settlement_decision(action, counter_amount=None):
                 "score": 66,
                 "route": "还价成功",
                 "summary": f"你提出 ${counter_amount:,} 的还价，原告最终接受，案件以该金额结案。",
+                "liability": counter_amount,
             })
-            g()["outcome"]["liability"] = counter_amount
         else:
             add_history("还价结果", f"你提出 ${counter_amount:,} 的还价，原告拒绝。当前报价仍为 ${demand:,}。")
         return

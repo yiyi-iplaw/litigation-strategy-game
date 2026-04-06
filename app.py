@@ -1709,7 +1709,7 @@ def render_phase():
                 advance_phase()
                 st.rerun()
 
-        elif ph == "mtd_motion":
+    elif ph == "mtd_motion":
         disabled = g()["mtd_motion_filed"] or not can_pay(ACTIONS_INFO["file_motion"]["cost"])
         st.caption(f"成本：${ACTIONS_INFO['file_motion']['cost']:,}")
         if st.button("提交 MTD", disabled=disabled, use_container_width=True):

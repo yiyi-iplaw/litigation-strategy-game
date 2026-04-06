@@ -755,7 +755,7 @@ def get_final_position(liability, cost_spent):
         "cost_quad": cost_quad,
     }
 
-
+def estimate_liability(outcome):
     title = outcome.get("title", "")
 
     # 零赔偿结局

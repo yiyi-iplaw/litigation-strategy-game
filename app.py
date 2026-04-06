@@ -159,6 +159,66 @@ FACT_TEMPLATES = {
         "你在 reply 中选择保守推进，只补最核心的一点，避免额外扩大战线。",
         "reply 较短，主要起到维持原有立场、避免新开战线的作用。",
     ],
+    "work_origin_strong": [
+        "你核查了客户的图片来源链条，发现其能提供供应商原始文件或设计稿，时间节点在原告声称创作时间之前。",
+        "客户提供了完整的图片来源记录，包括供应商交付文件和内部使用记录，独立来源叙事可以成立。",
+    ],
+    "work_origin_weak": [
+        "客户称图片来自供应商，但只能提供一份模糊的采购记录，无法完整还原来源链条。",
+        "你查看了客户的图片来源材料，发现记录存在缺口，独立来源的可信度有限。",
+    ],
+    "work_origin_none": [
+        "客户无法提供任何图片来源证明，既没有供应商文件，也没有内部设计或采购记录。",
+        "你核查后发现客户对图片的来源完全无法说明，独立来源抗辩基础很薄弱。",
+    ],
+    "work_type_simple": [
+        "你观察涉案图片，发现其构图简单、背景纯色、拍摄角度常见，属于典型的通用产品图风格。",
+        "涉案图片系普通产品拍摄，没有特别的创意布置或独特视觉安排，与市面上大量同类图片高度雷同。",
+    ],
+    "work_type_styled": [
+        "涉案图片有一定的布光和构图设计，并非最基础的白底产品图，但其整体风格仍属产品图常见范畴。",
+        "你研究图片后发现其有一定视觉设计感，原告可能会主张这是有创意选择的作品，但整体保护空间仍有限。",
+    ],
+    "work_type_creative": [
+        "涉案图片有明显的创意布置，包括独特构图、特殊场景搭配或精心设计的视觉元素，原告的版权主张基础相对扎实。",
+        "你评估后认为该图片超出了普通产品图的范畴，具有可识别的创意表达，原告版权保护范围可能较宽。",
+    ],
+    "prior_market_dense": [
+        "你在市场上检索到大量与原告图片风格、构图高度相似的在先产品图，时间均早于原告声称的创作时间。",
+        "市场调查结果显示，类似的产品图表达方式早已被广泛使用，原告作品独特性主张的空间被大幅压缩。",
+    ],
+    "prior_market_medium": [
+        "市场上存在部分与原告图片风格类似的在先作品，但并不密集，保护范围的争议空间存在但不算决定性。",
+        "你找到了几张风格近似的在先产品图，可以辅助支撑保护范围较薄的论点，但材料还不够充分。",
+    ],
+    "prior_market_sparse": [
+        "你在市场上未能找到与原告图片高度相似的在先作品，攻击保护范围的材料基础较弱。",
+        "现有检索结果显示，类似风格和构图的在先作品较少，原告独特性主张的压力相对有限。",
+    ],
+    "similarity_high": [
+        "你对比双方图片后发现，客户图片与原告图片在构图、角度、主体位置和背景处理上高度相似，差异点有限。",
+        "两张图片的相似程度较高，原告的相似性主张有一定支撑，正面否认相似性的空间较窄。",
+    ],
+    "similarity_medium": [
+        "你对比两张图片，发现存在明显重合之处，但也有若干可辨认的差异，相似性争议空间较大。",
+        "双方图片有一定相似度，但细节上存在差别，相似性问题在庭审中仍有一定辩论余地。",
+    ],
+    "similarity_low": [
+        "你仔细对比后认为，两张图片的相似点有限，差异集中在构图、角度或主体展示方式上，相似性主张基础不强。",
+        "客户图片与原告图片在细节上存在明显差异，直接攻击相似性不足有较好的事实支撑。",
+    ],
+    "ownership_clear": [
+        "你核查原告提交的版权登记材料，发现权属链条清晰，登记人与起诉人一致，权属基础较难攻击。",
+        "原告的版权登记文件完整，所有权归属明确，攻击权属基础需要额外挖掘登记以外的问题。",
+    ],
+    "ownership_questionable": [
+        "你发现原告的版权登记材料中存在一些模糊之处，比如登记时间偏晚或登记信息与诉状陈述存在出入。",
+        "原告权属链条并不完全清晰，登记文件与其实际主张之间有一定落差，攻击权属有一定余地。",
+    ],
+    "ownership_weak": [
+        "你核查后发现，原告的版权登记记录存在明显问题，要么登记人与起诉人不一致，要么来源文件缺失严重。",
+        "原告提交的权属材料漏洞较多，登记链条不完整，攻击权属基础可以作为主力论点之一。",
+    ],
 }
 
 COMPLAINT_BLOCKS = {
@@ -263,6 +323,10 @@ ACTIONS_INFO = {
     "pi_attack_scope": {"cost": 1400, "type": "pi_opp", "label": "PI Opposition：攻击保护范围"},
     "pi_assert_independent_creation": {"cost": 1600, "type": "pi_opp", "label": "PI Opposition：主张独立来源"},
     "pi_attack_ownership": {"cost": 1300, "type": "pi_opp", "label": "PI Opposition：攻击权属与基础"},
+    "invest_work_origin": {"cost": 1600, "type": "fact", "label": "调查图片来源与独立性"},
+    "invest_prior_market": {"cost": 1800, "type": "fact", "label": "调查市场在先作品"},
+    "invest_similarity": {"cost": 1400, "type": "fact", "label": "对比相似度"},
+    "invest_ownership": {"cost": 1200, "type": "fact", "label": "核查原告版权权属"},
 }
 
 def rand_choice(rng, key):
@@ -704,7 +768,7 @@ def current_guidance():
     if ph == "intake":
         return "先看材料，找疑点。此阶段不是下结论，而是识别哪里值得花钱。"
     if ph == "investigation":
-        return "选一个事实调查方向。调查结果只会给你材料，不会告诉你好坏。"
+        return "选择调查方向。程序性调查影响 MTD 路线；版权实体调查影响 PI opposition 的选择和结果。"
     if ph == "research":
         return "研究判例和攻击路径。重点是程序抗辩与版权实体风险。"
     if ph == "strategy":
@@ -817,6 +881,79 @@ def investigate_evidence():
     g()["facts_known"].append(f"调查结果：{text}")
     add_history("核查证据时间线", text)
     mark_used("invest_evidence")
+    g()["subphase_done"] = True
+
+def investigate_work_origin():
+    spend_client(ACTIONS_INFO["invest_work_origin"]["cost"])
+    hc = g()["hidden_case"]
+    ics = hc["independent_creation_support"]
+    wt = hc["work_type"]
+    if ics == "strong":
+        origin_key = "work_origin_strong"
+    elif ics == "weak":
+        origin_key = "work_origin_weak"
+    else:
+        origin_key = "work_origin_none"
+    origin_text = rand_choice(random.Random(g()["seed"] + 411), origin_key)
+    if wt == "simple_product_photo":
+        type_key = "work_type_simple"
+    elif wt == "styled_product_image":
+        type_key = "work_type_styled"
+    else:
+        type_key = "work_type_creative"
+    type_text = rand_choice(random.Random(g()["seed"] + 421), type_key)
+    full_text = origin_text + " " + type_text
+    g()["facts_known"].append(f"调查结果：{full_text}")
+    add_history("调查图片来源与独立性", full_text)
+    mark_used("invest_work_origin")
+    g()["subphase_done"] = True
+
+def investigate_prior_market():
+    spend_client(ACTIONS_INFO["invest_prior_market"]["cost"])
+    hc = g()["hidden_case"]
+    pad = hc["prior_art_density"]
+    if pad == "high":
+        key = "prior_market_dense"
+    elif pad == "medium":
+        key = "prior_market_medium"
+    else:
+        key = "prior_market_sparse"
+    text = rand_choice(random.Random(g()["seed"] + 431), key)
+    g()["facts_known"].append(f"调查结果：{text}")
+    add_history("调查市场在先作品", text)
+    mark_used("invest_prior_market")
+    g()["subphase_done"] = True
+
+def investigate_similarity():
+    spend_client(ACTIONS_INFO["invest_similarity"]["cost"])
+    hc = g()["hidden_case"]
+    sim = hc["similarity_to_claimed"]
+    if sim >= 70:
+        key = "similarity_high"
+    elif sim >= 45:
+        key = "similarity_medium"
+    else:
+        key = "similarity_low"
+    text = rand_choice(random.Random(g()["seed"] + 441), key)
+    g()["facts_known"].append(f"调查结果：{text}")
+    add_history("对比相似度", text)
+    mark_used("invest_similarity")
+    g()["subphase_done"] = True
+
+def investigate_ownership():
+    spend_client(ACTIONS_INFO["invest_ownership"]["cost"])
+    hc = g()["hidden_case"]
+    oc = hc["ownership_clarity"]
+    if oc == "clear":
+        key = "ownership_clear"
+    elif oc == "questionable":
+        key = "ownership_questionable"
+    else:
+        key = "ownership_weak"
+    text = rand_choice(random.Random(g()["seed"] + 451), key)
+    g()["facts_known"].append(f"调查结果：{text}")
+    add_history("核查原告版权权属", text)
+    mark_used("invest_ownership")
     g()["subphase_done"] = True
 
 def research_pj():
@@ -1216,6 +1353,69 @@ def evaluate_outcome():
     elif reply_choice == "reply_narrow":
         settle_score += 0.03
 
+    # merits clues from investigation
+    fk_str = " ".join(fk)
+    if "独立来源叙事可以成立" in fk_str or "完整的图片来源记录" in fk_str:
+        inj_score += 0.14
+        settle_score += 0.08
+    elif "来源链条不完整" in fk_str or "独立来源的可信度有限" in fk_str:
+        inj_score -= 0.04
+    elif "完全无法说明" in fk_str or "独立来源抗辩基础很薄弱" in fk_str:
+        inj_score -= 0.10
+
+    if "大量与原告图片风格" in fk_str or "大幅压缩" in fk_str:
+        inj_score += 0.14
+        settle_score += 0.06
+    elif "几张风格近似" in fk_str:
+        inj_score += 0.05
+    elif "未能找到与原告图片高度相似" in fk_str:
+        inj_score -= 0.06
+
+    if "构图简单" in fk_str or "通用产品图风格" in fk_str:
+        inj_score += 0.10
+        settle_score += 0.05
+    elif "超出了普通产品图的范畴" in fk_str or "可识别的创意表达" in fk_str:
+        inj_score -= 0.10
+
+    if "相似点有限" in fk_str or "相似性主张基础不强" in fk_str:
+        inj_score += 0.14
+        settle_score += 0.06
+    elif "相似程度较高" in fk_str or "正面否认相似性的空间较窄" in fk_str:
+        inj_score -= 0.12
+
+    if "漏洞较多" in fk_str or "登记链条不完整" in fk_str:
+        inj_score += 0.12
+        settle_score += 0.06
+    elif "链条并不完全清晰" in fk_str or "有一定落差" in fk_str:
+        inj_score += 0.05
+    elif "链条清晰" in fk_str or "权属基础较难攻击" in fk_str:
+        inj_score -= 0.06
+
+    # pi_opposition choice alignment bonus
+    poc = g().get("pi_opposition_choice")
+    if poc == "pi_assert_independent_creation":
+        ics = hc["independent_creation_support"]
+        if ics == "strong":
+            inj_score += 0.10
+        elif ics == "none":
+            inj_score -= 0.08
+    elif poc == "pi_attack_scope":
+        if hc["prior_art_density"] == "high":
+            inj_score += 0.10
+        elif hc["prior_art_density"] == "low":
+            inj_score -= 0.06
+    elif poc == "pi_attack_similarity":
+        sim = hc["similarity_to_claimed"]
+        if sim < 45:
+            inj_score += 0.10
+        elif sim >= 70:
+            inj_score -= 0.08
+    elif poc == "pi_attack_ownership":
+        if hc["ownership_clarity"] == "weak":
+            inj_score += 0.10
+        elif hc["ownership_clarity"] == "clear":
+            inj_score -= 0.06
+
     path_scores = {
         "mtd": mtd_score,
         "inj": inj_score,
@@ -1579,9 +1779,10 @@ def render_phase():
                 st.rerun()
 
     elif ph == "investigation":
+        st.caption("程序性调查")
         cols = st.columns(3)
-        action_keys = ["invest_sales", "invest_testbuy", "invest_evidence"]
-        for i, k in enumerate(action_keys):
+        proc_keys = ["invest_sales", "invest_testbuy", "invest_evidence"]
+        for i, k in enumerate(proc_keys):
             with cols[i]:
                 disabled = used(k) or not can_pay(ACTIONS_INFO[k]["cost"])
                 st.caption(f"成本：${ACTIONS_INFO[k]['cost']:,}")
@@ -1595,7 +1796,26 @@ def render_phase():
                     forced_end_check()
                     st.rerun()
 
-        if used("invest_sales") or used("invest_testbuy") or used("invest_evidence"):
+        st.caption("版权实体调查")
+        cols2 = st.columns(2)
+        merits_keys = ["invest_work_origin", "invest_prior_market", "invest_similarity", "invest_ownership"]
+        merits_fns = {
+            "invest_work_origin": investigate_work_origin,
+            "invest_prior_market": investigate_prior_market,
+            "invest_similarity": investigate_similarity,
+            "invest_ownership": investigate_ownership,
+        }
+        for i, k in enumerate(merits_keys):
+            with cols2[i % 2]:
+                disabled = used(k) or not can_pay(ACTIONS_INFO[k]["cost"])
+                st.caption(f"成本：${ACTIONS_INFO[k]['cost']:,}")
+                if st.button(ACTIONS_INFO[k]["label"], key=k, disabled=disabled, use_container_width=True):
+                    merits_fns[k]()
+                    forced_end_check()
+                    st.rerun()
+
+        all_invest_keys = proc_keys + merits_keys
+        if any(used(k) for k in all_invest_keys):
             if st.button(next_phase_button(), use_container_width=True):
                 advance_phase()
                 st.rerun()

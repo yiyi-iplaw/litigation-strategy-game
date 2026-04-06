@@ -609,7 +609,7 @@ def phase_name():
         "pi_ruling": "等待 PI 裁决",
         "ended": "本局结束",
     }
-    return mapping[g()["phase"]]
+    return mapping.get(g()["phase"], f"未知阶段：{g()['phase']}")
 
 def used(action_key):
     return action_key in g()["used_actions"]

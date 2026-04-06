@@ -597,13 +597,17 @@ def compute_pi_merits_score():
 def is_willful_infringement():
     hc = g()["hidden_case"]
     criteria = 0
+    # 高度相似且无可信独立来源，是故意侵权的核心指标
     if hc["similarity_to_claimed"] >= 70:
         criteria += 1
     if hc["independent_creation_support"] == "none":
         criteria += 1
-    if hc["ownership_clarity"] == "clear":
+    # 市场无类似在先作品，被告难以主张来源于其他渠道
+    if hc["prior_art_density"] == "low":
         criteria += 1
-    if not hc["evidence_issue"]:
+    # 玩家调查结论也纳入：若调查到相似度高，额外加权
+    fk_str = " ".join(g().get("facts_known", []))
+    if "相似程度较高" in fk_str or "正面否认相似性的空间较窄" in fk_str:
         criteria += 1
     return criteria >= 2
 
@@ -1586,10 +1590,20 @@ def evaluate_outcome():
     fk = g()["facts_known"]
     rk = g()["research_known"]
     strat = g()["strategy"]
-    reply_choice = g().get("reply_choice", None)
+
+    # PI merits score 直接决定 inj_score 的起点
+    merits = compute_pi_merits_score()
+    if merits < 35:
+        inj_base = 0.10
+    elif merits < 50:
+        inj_base = 0.20
+    elif merits < 65:
+        inj_base = 0.32
+    else:
+        inj_base = 0.44
 
     mtd_score = 0.25
-    inj_score = 0.25
+    inj_score = inj_base
     settle_score = 0.25
     attrition_score = 0.25
 
@@ -1746,8 +1760,19 @@ def evaluate_outcome():
         "attrition": attrition_score,
     }
 
-    non_settle_scores = {k: v for k, v in path_scores.items() if k != "settle"}
-    best_path = max(non_settle_scores, key=non_settle_scores.get)
+    # settle 最高时判断实际推进方向
+    raw_best = max(path_scores, key=path_scores.get)
+    if raw_best == "settle":
+        second_best = max(
+            {k: v for k, v in path_scores.items() if k != "settle"},
+            key=lambda k: path_scores[k]
+        )
+        if path_scores[second_best] >= path_scores["settle"] * 0.85:
+            best_path = second_best
+        else:
+            best_path = "settle"
+    else:
+        best_path = raw_best
     best_score = path_scores[best_path]
 
     if best_path == "mtd":
@@ -1758,6 +1783,7 @@ def evaluate_outcome():
                 "score": 94,
                 "route": "程序性胜利",
                 "summary": "法院接受了你的程序逻辑，认为现有记录不足以支撑本州个人管辖或至少不足以在当前阶段继续推进。",
+                "liability": 0,
             }
         elif best_score >= 0.58:
             out = {
@@ -1775,6 +1801,14 @@ def evaluate_outcome():
                 "route": "程序路线失利",
                 "summary": "法院认为当前记录不足以支持你要求在此节点终结案件，程序抗辩未奏效。",
             }
+    elif best_path == "settle":
+        out = {
+            "title": "谈判压价成功",
+            "kind": "较好结局",
+            "score": 72,
+            "route": "和解路线",
+            "summary": "你通过持续的事实调查和程序压力，把对方的预期压到了合理范围，双方以较低金额了结。",
+        }
     elif best_path == "inj":
         if best_score >= 0.70:
             out = {
@@ -1828,8 +1862,18 @@ def evaluate_outcome():
 
     g()["path_scores"] = path_scores
 
-    # PI 是否被批准
-    pi_granted = (best_path == "inj" and best_score < 0.56) or (best_path == "attrition" and best_score < 0.52)
+    # PI 是否被批准：基于 merits 的动态阈值
+    if merits < 35:
+        pi_granted_threshold = 0.70
+    elif merits < 50:
+        pi_granted_threshold = 0.60
+    elif merits < 65:
+        pi_granted_threshold = 0.52
+    else:
+        pi_granted_threshold = 0.44
+
+    # inj_score 低于阈值 = 被告顶住，PI 未获批准
+    pi_granted = path_scores["inj"] >= pi_granted_threshold
     g()["pi_granted"] = pi_granted
     g()["pi_ruling_out"] = out
 

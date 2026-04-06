@@ -259,7 +259,7 @@ ACTIONS_INFO = {
     "reply_attack_timeline": {"cost": 1200, "type": "reply", "label": "Reply 主打时间线矛盾"},
     "reply_attack_pj": {"cost": 1200, "type": "reply", "label": "Reply 主打程序门槛"},
     "reply_narrow": {"cost": 700, "type": "reply", "label": "Reply 保守收束"},
-        "pi_attack_similarity": {"cost": 1400, "type": "pi_opp", "label": "PI Opposition：攻击相似性"},
+    "pi_attack_similarity": {"cost": 1400, "type": "pi_opp", "label": "PI Opposition：攻击相似性"},
     "pi_attack_scope": {"cost": 1400, "type": "pi_opp", "label": "PI Opposition：攻击保护范围"},
     "pi_assert_independent_creation": {"cost": 1600, "type": "pi_opp", "label": "PI Opposition：主张独立来源"},
     "pi_attack_ownership": {"cost": 1300, "type": "pi_opp", "label": "PI Opposition：攻击权属与基础"},
@@ -334,13 +334,13 @@ def init_game(seed=None):
         "pi_result": None,
         "current_demand": None,
         "settlement_history": [],
-        "demand_stage_seen": set(),
+        "demand_stage_seen": [],
         "counter_offer_last": None,
         "outcome": None,
         "history": [],
         "facts_known": [],
         "research_known": [],
-        "used_actions": set(),
+        "used_actions": [],
         "story_fragments": [
             f"你的客户是一家{client['name']}。{claim['opening']}",
         ],
@@ -615,7 +615,8 @@ def used(action_key):
     return action_key in g()["used_actions"]
 
 def mark_used(action_key):
-    g()["used_actions"].add(action_key)
+    if action_key not in g()["used_actions"]:
+        g()["used_actions"].append(action_key)
 
 def unlock_story_round():
     r = g()["round"]
@@ -641,10 +642,14 @@ def forced_end_check():
         "investigation": 1500,
         "research": 800,
         "strategy": 500,
-        "motion": 1500,
-        "response": 0,
-        "reply": 700,
-        "ruling": 0,
+        "mtd_motion": 1500,
+        "mtd_opposition": 0,
+        "mtd_reply": 700,
+        "mtd_ruling": 0,
+        "pi_motion": 0,
+        "pi_opposition": 1300,
+        "pi_reply": 0,
+        "pi_ruling": 0,
         "ended": 0,
     }
 
@@ -654,7 +659,7 @@ def forced_end_check():
     if (
         g()["client_budget"] <= 0
         or (
-            current_phase not in ["response", "ruling", "ended"]
+            current_phase not in ["mtd_opposition", "mtd_ruling", "pi_motion", "pi_reply", "pi_ruling", "ended"]
             and g()["client_budget"] < min_future_cost
         )
     ):
@@ -868,7 +873,7 @@ def choose_strategy(strategy_key):
 def file_motion():
     spend_client(ACTIONS_INFO["file_motion"]["cost"])
     spend_plaintiff(random.randint(1200, 2200))
-    g()["motion_filed"] = True
+    g()["mtd_motion_filed"] = True
 
     if g()["strategy"] is None:
         g()["strategy"] = "mtd"
@@ -1056,7 +1061,7 @@ def trigger_demand(stage, label):
         "label": label,
         "demand": demand,
     })
-    g()["demand_stage_seen"].add(stage)
+    g()["demand_stage_seen"].append(stage)
 
     add_history("原告报价", f"{label}：原告提出和解条件，要求支付 ${demand:,}。")
 
@@ -1173,7 +1178,7 @@ def evaluate_outcome():
         attrition_score -= 0.08
 
     mtd_score += judge["mtd_bonus"]
-    inj_score -= judge["inj_bonus"]
+    inj_score += judge["inj_bonus"]
     settle_score += judge["settle_bonus"]
 
     if g()["risk"] >= 60:
@@ -1534,7 +1539,7 @@ def render_phase():
         attempt_settlement()
         st.rerun()
 
-    if g()["phase"] not in ["response", "reply", "ruling", "ended"]:
+    if g()["phase"] not in ["mtd_opposition", "mtd_reply", "mtd_ruling", "pi_motion", "pi_reply", "pi_ruling", "ended"]:
         if st.button("立即提交动议（跳过当前阶段）", use_container_width=True, key="jump_motion"):
             if can_pay(ACTIONS_INFO["file_motion"]["cost"]):
                 file_motion()

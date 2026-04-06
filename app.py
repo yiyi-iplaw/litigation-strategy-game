@@ -662,6 +662,21 @@ def generate_response():
     g()["response_seen"] = True
     g()["subphase_done"] = True
 
+def submit_reply(reply_key):
+    spend_client(ACTIONS_INFO[reply_key]["cost"])
+
+    if reply_key == "reply_attack_timeline":
+        text = rand_choice(random.Random(g()["seed"] + 311), "reply_attack_timeline")
+    elif reply_key == "reply_attack_pj":
+        text = rand_choice(random.Random(g()["seed"] + 331), "reply_attack_pj")
+    else:
+        text = rand_choice(random.Random(g()["seed"] + 351), "reply_narrow")
+
+    add_history("我方 reply", text)
+    g()["reply_done"] = True
+    g()["reply_choice"] = reply_key
+    g()["subphase_done"] = True
+
 def attempt_settlement():
     fk = g()["facts_known"]
     hc = g()["hidden_case"]

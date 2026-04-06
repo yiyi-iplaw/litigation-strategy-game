@@ -959,6 +959,7 @@ def phase_name():
         "pi_opposition": "提交 PI opposition",
         "pi_reply": "阅读原告 PI reply",
         "pi_ruling": "等待 PI 裁决",
+        "post_pi_negotiation": "PI 后谈判",
         "ended": "本局结束",
     }
     return mapping.get(g()["phase"], f"未知阶段：{g()['phase']}")
@@ -2174,7 +2175,7 @@ def render_phase():
     st.markdown("---")
     st.subheader(f"第 {g()['round']} 回合｜{phase_name()}")
     st.info(current_guidance())
-    if g().get("current_demand") is not None and g()["outcome"] is None:
+    if g().get("current_demand") is not None and g()["outcome"] is None and g()["phase"] != "post_pi_negotiation":
         st.markdown("### 原告当前报价")
         st.warning(f"原告当前和解要求：${g()['current_demand']:,}")
 
@@ -2539,12 +2540,17 @@ def render_phase():
             st.caption(dmg["chosen_label"])
 
         st.markdown("### 原告当前报价")
-        st.warning(f"当前和解要求：${g()['current_demand']:,}")
+        current = g().get("current_demand")
+        if current is None:
+            st.warning("对方尚未给出明确报价，你可以主动尝试和解或选择拖延。")
+        else:
+            st.warning(f"当前和解要求：${current:,}")
         st.caption(f"已拖延回合：{g()['post_pi_delay_rounds']}/3｜律师费剩余：${max(g()['client_budget'], 0):,}")
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("接受报价", use_container_width=True, key="post_pi_accept"):
+            accept_disabled = g().get("current_demand") is None
+            if st.button("接受报价", use_container_width=True, key="post_pi_accept", disabled=accept_disabled):
                 demand = g()["current_demand"]
                 end_with_outcome({
                     "title": "PI 后和解",
@@ -2557,12 +2563,15 @@ def render_phase():
                 })
                 st.rerun()
         with col2:
+            counter_disabled = g().get("current_demand") is None
+            counter_default = int(g()["current_demand"] * 0.6) if g().get("current_demand") else 0
             counter_val = st.number_input(
                 "还价金额 ($)", min_value=0,
-                value=int(g()["current_demand"] * 0.6),
-                step=500, key="post_pi_counter_val"
+                value=counter_default,
+                step=500, key="post_pi_counter_val",
+                disabled=counter_disabled
             )
-            if st.button("提交还价", use_container_width=True, key="post_pi_counter"):
+            if st.button("提交还价", use_container_width=True, key="post_pi_counter", disabled=counter_disabled):
                 floor = dmg["floor_price"]
                 if counter_val >= floor:
                     end_with_outcome({

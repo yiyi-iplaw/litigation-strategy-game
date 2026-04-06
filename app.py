@@ -352,20 +352,93 @@ def spend_plaintiff(cost):
 def can_pay(cost):
     return g()["client_budget"] >= cost
 
-def apply_budget_adjusted_score(outcome):
-    spent = max(0, g()["initial_client_budget"] - g()["client_budget"])
-    spend_ratio = spent / max(g()["initial_client_budget"], 1)
+def get_initial_position():
+    hc = g()["hidden_case"]
 
-    # 花得越少，加分越高；最多加 15 分
-    budget_bonus = round((1 - spend_ratio) * 15)
+    fact_score = 0.5
+    if not hc["forum_sale"]:
+        fact_score += 0.2
+    else:
+        fact_score -= 0.2
 
-    outcome["base_score"] = outcome["score"]
-    outcome["budget_bonus"] = budget_bonus
-    outcome["score"] = max(1, min(99, outcome["score"] + budget_bonus))
+    if not hc["test_buy"]:
+        fact_score += 0.2
+    elif hc["test_buy_strength"] == "strong":
+        fact_score -= 0.2
+    else:
+        fact_score -= 0.05
+
+    if hc["evidence_issue"]:
+        fact_score += 0.2
+
+    fact_score = max(0, min(1, fact_score))
+    budget_score = max(0, min(1, g()["initial_client_budget"] / 10000))
+
+    return {
+        "fact_score": fact_score,
+        "budget_score": budget_score,
+        "fact_quad": "事实有利" if fact_score >= 0.5 else "事实不利",
+        "budget_quad": "预算高" if budget_score >= 0.5 else "预算低",
+    }
+
+def estimate_liability(outcome):
+    title = outcome.get("title", "")
+
+    mapping = {
+        "代理终止 / 缺席判决": 30000,
+        "原告撤回推进": 0,
+        "低价和解成功": 3000,
+        "中等和解": 9000,
+        "和解条件不佳": 18000,
+        "Motion to Dismiss 获准": 0,
+        "Motion to Dismiss 部分成功": 5000,
+        "程序抗辩失败": 22000,
+        "禁令压力被显著削弱": 0,
+        "局部顶住禁令压力": 7000,
+        "禁令对抗失败": 25000,
+        "原告推进崩塌": 0,
+        "对方推进明显放缓": 5000,
+        "消耗战未奏效": 18000,
+    }
+    return mapping.get(title, 12000)
+
+def get_final_position(liability, cost_spent):
+    liability_quad = "赔偿低" if liability <= 5000 else "赔偿高"
+    cost_quad = "消耗低" if cost_spent <= g()["initial_client_budget"] * 0.5 else "消耗高"
+
+    return {
+        "liability_quad": liability_quad,
+        "cost_quad": cost_quad,
+    }
+
+def compute_final_score(outcome):
+    init = get_initial_position()
+
+    initial_advantage = init["fact_score"] * 0.6 + init["budget_score"] * 0.4
+
+    liability = estimate_liability(outcome)
+    cost_spent = max(0, g()["initial_client_budget"] - g()["client_budget"])
+
+    liability_norm = min(liability / 30000, 1)
+    cost_norm = min(cost_spent / max(g()["initial_client_budget"], 1), 1)
+
+    final_goodness = (1 - liability_norm) * 0.7 + (1 - cost_norm) * 0.3
+
+    performance_delta = final_goodness - initial_advantage
+    score = int(50 + performance_delta * 50)
+    score = max(1, min(99, score))
+
+    outcome["initial_position"] = init
+    outcome["liability"] = liability
+    outcome["cost_spent"] = cost_spent
+    outcome["final_position"] = get_final_position(liability, cost_spent)
+    outcome["performance_delta"] = round(performance_delta, 3)
+    outcome["score"] = score
+
     return outcome
 
 def end_with_outcome(outcome):
-    g()["outcome"] = apply_budget_adjusted_score(outcome)
+    g()["outcome"] = compute_final_score(outcome)
     g()["phase"] = "ended"
 
 def risk_text(v):
@@ -1258,8 +1331,12 @@ def render_result():
 
     st.write(out["summary"])
 
-    if "base_score" in out:
-        st.caption(f"基础结果分：{out['base_score']}｜预算效率加分：+{out.get('budget_bonus', 0)}")
+    st.markdown("### 位置变化")
+    st.write(f"初始位置：**{out['initial_position']['budget_quad']} × {out['initial_position']['fact_quad']}**")
+    st.write(f"终局位置：**{out['final_position']['cost_quad']} × {out['final_position']['liability_quad']}**")
+    st.caption(
+        f"预估赔偿：${out['liability']:,}｜实际消耗：${out['cost_spent']:,}｜表现差值：{out['performance_delta']}"
+    )
 
     st.markdown("### 路线结论")
     st.write(f"本局的实际终局路线：**{out['route']}**")

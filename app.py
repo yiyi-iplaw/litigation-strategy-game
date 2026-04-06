@@ -1172,10 +1172,13 @@ def research_inj():
 
 def research_settle():
     spend_client(ACTIONS_INFO["research_settle"]["cost"])
-    pb = g()["hidden_case"]["plaintiff_budget"]
+    hc = g()["hidden_case"]
+    pb = hc["plaintiff_budget"]
+    initial_pb = hc["plaintiff_budget_initial"]
+    budget_ratio = pb / max(initial_pb, 1)
     text = rand_choice(
         random.Random(g()["seed"] + 171),
-        "settlement_signal_low_budget" if pb <= 5500 else "settlement_signal_high_budget"
+        "settlement_signal_low_budget" if budget_ratio <= 0.40 else "settlement_signal_high_budget"
     )
     g()["research_known"].append(f"研究结果：{text}")
     add_history("观察对方推进强度", text)
@@ -1520,7 +1523,8 @@ def evaluate_outcome():
         settle_score += 0.08
         inj_score -= 0.08
 
-    if hc["plaintiff_budget"] <= 4500:
+    plaintiff_budget_ratio = hc["plaintiff_budget"] / max(hc["plaintiff_budget_initial"], 1)
+    if plaintiff_budget_ratio <= 0.20:
         attrition_score += 0.22
         settle_score += 0.12
 
@@ -1952,7 +1956,12 @@ def render_phase():
         if st.button("立即提交动议（跳过当前阶段）", use_container_width=True, key="jump_motion"):
             if can_pay(ACTIONS_INFO["file_motion"]["cost"]):
                 file_motion()
-                g()["phase"] = "response"
+                strategy = g().get("strategy") or "mtd"
+                if strategy == "mtd":
+                    g()["phase"] = "mtd_motion"
+                    g()["mtd_motion_filed"] = True
+                else:
+                    g()["phase"] = "pi_motion"
                 g()["subphase_done"] = False
                 forced_end_check()
                 st.rerun()

@@ -311,10 +311,42 @@ COMPLAINT_BLOCKS = {
         "附件中虽有 screenshots，但未清楚呈现完整 metadata 或 source context。",
         "起诉状虽附有图片材料，但部分 exhibits 的 source context 和 metadata 展示不充分。",
     ],
+    "work_claim_simple": [
+        "原告主张其享有一张产品展示图片的版权，该图片系白底拍摄，风格简洁，Plaintiff 称其为独创作品并已完成版权登记。",
+        "Plaintiff 声称对一张产品图片享有版权，图片呈现为标准产品拍摄风格，并附有 copyright registration certificate。",
+        "起诉状称 Plaintiff 对涉案产品图持有有效版权登记，图片为普通产品展示拍摄，Plaintiff 主张该图属其原创作品。",
+    ],
+    "work_claim_styled": [
+        "原告主张其享有一张具有特定布光和场景设计的产品图片的版权，称该图在构图和视觉表达上具有独创性，并已完成版权登记。",
+        "Plaintiff 声称对一张经过专业场景搭配的产品图享有版权，主张其在布光、角度和整体风格上体现了创意选择。",
+        "起诉状称涉案版权作品系一张有明显风格化处理的产品图，Plaintiff 主张其视觉表达超出了普通产品图的范畴。",
+    ],
+    "work_claim_creative": [
+        "原告主张其享有一张经过精心场景创作的产品图片的版权，称该图融合了独特构图、场景搭配及视觉设计元素，创意性显著。",
+        "Plaintiff 声称对一张具有高度创意布置的产品图享有版权，主张其在整体表达上属于具有较强保护价值的原创作品。",
+        "起诉状称涉案版权图片系原告精心拍摄制作，具有独特的视觉叙事和场景设计，Plaintiff 主张该作品应受到完整版权保护。",
+    ],
+    "accused_product_online": [
+        "起诉状指控 Defendant 在 Amazon 等电商平台上使用了与原告版权图片实质性相似的产品图，用于其同类产品的商品详情页展示。",
+        "Plaintiff 称 Defendant 未经授权，将与原告版权作品高度相似的图片上传至其在线商品页面，用于销售同类产品。",
+        "起诉状主张 Defendant 在电商平台的商品 listing 中使用了涉嫌复制自原告版权图片的图像，构成直接侵权。",
+    ],
 }
 
 def build_complaint_text(hidden_case, rng):
     parts = []
+
+    # 版权作品描述（最先出现，确立案件性质）
+    work_type = hidden_case.get("work_type", "simple_product_photo")
+    if work_type == "simple_product_photo":
+        parts.append(rng.choice(COMPLAINT_BLOCKS["work_claim_simple"]))
+    elif work_type == "styled_product_image":
+        parts.append(rng.choice(COMPLAINT_BLOCKS["work_claim_styled"]))
+    else:
+        parts.append(rng.choice(COMPLAINT_BLOCKS["work_claim_creative"]))
+
+    # 被控产品和侵权行为描述
+    parts.append(rng.choice(COMPLAINT_BLOCKS["accused_product_online"]))
 
     # forum contacts
     if hidden_case["forum_sale"]:
@@ -481,6 +513,7 @@ def init_game(seed=None):
                     "test_buy_strength": test_buy_strength,
                     "evidence_issue": evidence_issue,
                     "plaintiff_goal": plaintiff_goal,
+                    "work_type": work_type,
                 },
                 rng
             ),
@@ -1909,9 +1942,12 @@ def render_sidebar():
     st.sidebar.write(f"目标：{g()['client']['goal']}")
 
     st.sidebar.markdown("### 对方律师来函")
-    st.sidebar.info(plaintiff_signal())
-    if used("research_settle"):
-        st.sidebar.caption(f"（你的判断：{plaintiff_signal_decoded()}）")
+    if g()["phase"] == "intake":
+        st.sidebar.caption("尚未收到对方律师的任何书面沟通。")
+    else:
+        st.sidebar.info(plaintiff_signal())
+        if used("research_settle"):
+            st.sidebar.caption(f"（你的判断：{plaintiff_signal_decoded()}）")
 
     st.sidebar.markdown("### 已获得材料")
     for x in g()["facts_known"][-6:]:

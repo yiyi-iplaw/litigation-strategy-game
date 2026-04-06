@@ -1065,13 +1065,13 @@ def settlement_decision(action, counter_amount=None):
 
     if action == "accept":
         end_with_outcome({
-            "title": "接受和解",
+            "title": "最终和解",
             "kind": "中等结局" if demand > 5000 else "较好结局",
             "score": 60,
             "route": "接受原告报价",
-            "summary": f"你接受了原告当前报价，以 ${demand:,} 的金额结束案件。",
+            "summary": f"你接受了原告当前报价，案件以和解金额 ${demand:,} 结束。",
+            "liability": demand,
         })
-        g()["outcome"]["liability"] = demand
         return
 
     if action == "counter":
@@ -1114,58 +1114,12 @@ def generate_pi_reply():
     g()["subphase_done"] = True
 
 def attempt_settlement():
-    fk = g()["facts_known"]
-    hc = g()["hidden_case"]
-    round_num = g()["round"]
+    stage = f"{g()['phase']}_manual"
 
-    score = 0.40
-
-    # 有利因素
-    if "线索：Illinois forum contacts 不明确" in fk:
-        score += 0.20
-    if "线索：测购材料存在缺口" in fk or "线索：未见明确测购" in fk:
-        score += 0.15
-    if "线索：证据可能存在时间线问题" in fk:
-        score += 0.20
-    if hc["plaintiff_budget"] <= 5000:
-        score += 0.25
-    if round_num >= 3:
-        score += 0.08
-
-    # 不利因素
-    if round_num == 1:
-        score -= 0.18
-    if "线索：可能存在 Illinois forum contacts" in fk:
-        score -= 0.20
-    if "线索：测购材料较完整" in fk:
-        score -= 0.15
-
-    if score >= 0.75:
-        outcome = {
-            "title": "低价和解成功",
-            "kind": "较好结局",
-            "score": 78,
-            "route": "和解压价成功",
-            "summary": "你利用已有信息和程序压力压低了对方预期，以较低成本结束案件。",
-        }
-    elif score >= 0.55:
-        outcome = {
-            "title": "中等和解",
-            "kind": "中等结局",
-            "score": 60,
-            "route": "和解收尾",
-            "summary": "你成功推动和解，但条件并不算理想。",
-        }
+    if g().get("current_demand") is None:
+        trigger_demand(stage, "你方主动提出和解后，原告给出报价")
     else:
-        outcome = {
-            "title": "和解条件不佳",
-            "kind": "失败结局",
-            "score": 34,
-            "route": "谈判失败",
-            "summary": "你在不利时点提出和解，对方没有给出合理条件。",
-        }
-
-    end_with_outcome(outcome)
+        add_history("和解动态", f"当前已有原告报价：${g()['current_demand']:,}。你可以接受、拒绝或还价。")
 
 def contains_any(items, substrings):
     return any(any(s in item for s in substrings) for item in items)
@@ -1264,7 +1218,8 @@ def evaluate_outcome():
         "attrition": attrition_score,
     }
 
-    best_path = max(path_scores, key=path_scores.get)
+    non_settle_scores = {k: v for k, v in path_scores.items() if k != "settle"}
+    best_path = max(non_settle_scores, key=non_settle_scores.get)
     best_score = path_scores[best_path]
 
     if best_path == "mtd":
@@ -1316,31 +1271,6 @@ def evaluate_outcome():
                 "score": 25,
                 "route": "正面对抗失利",
                 "summary": "你选择了最硬的一条路，但现有材料和资源不足以支撑这一方向。",
-            }
-    elif best_path == "settle":
-        if best_score >= 0.66:
-            out = {
-                "title": "低价和解成功",
-                "kind": "较好结局",
-                "score": 77,
-                "route": "经济性胜利",
-                "summary": "你利用已有事实和程序压力压低了对方预期，案件以可接受成本结束。",
-            }
-        elif best_score >= 0.50:
-            out = {
-                "title": "中等和解",
-                "kind": "中等结局",
-                "score": 60,
-                "route": "中间价位收尾",
-                "summary": "案件结束了，但你没有拿到特别理想的数字。至少成功止损。",
-            }
-        else:
-            out = {
-                "title": "和解条件不佳",
-                "kind": "失败结局",
-                "score": 34,
-                "route": "谈判时点不佳",
-                "summary": "你在底牌不够或压力不足时进入谈判，对方没有给出理想条件。",
             }
     else:
         if best_score >= 0.68:

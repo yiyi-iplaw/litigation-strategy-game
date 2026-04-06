@@ -1578,7 +1578,7 @@ def render_phase():
     st.markdown("---")
     st.subheader(f"第 {g()['round']} 回合｜{phase_name()}")
     st.info(current_guidance())
-        if g().get("current_demand") is not None and g()["outcome"] is None:
+    if g().get("current_demand") is not None and g()["outcome"] is None:
         st.markdown("### 原告当前报价")
         st.warning(f"原告当前和解要求：${g()['current_demand']:,}")
 

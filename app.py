@@ -244,6 +244,7 @@ def build_complaint_text(hidden_case, rng):
 ACTIONS_INFO = {
     "review_complaint": {"cost": 400, "type": "review", "label": "阅读 complaint 摘要"},
     "review_client_msg": {"cost": 300, "type": "review", "label": "阅读客户初步陈述"},
+    "review_financials": {"cost": 400, "type": "review", "label": "核实冻结金额与销售金额"},
     "invest_sales": {"cost": 1500, "type": "fact", "label": "调查销售流向"},
     "invest_testbuy": {"cost": 1500, "type": "fact", "label": "调查测购情况"},
     "invest_evidence": {"cost": 2000, "type": "fact", "label": "核查证据时间线"},
@@ -282,6 +283,13 @@ def init_game(seed=None):
     evidence_issue = rng.random() < (0.35 if opponent_key == "gray" else 0.18)
     plaintiff_goal = rng.choice(["freeze_fast", "settle_fast", "pressure_defendant"])
 
+    frozen_amount = rng.randint(0, 30000)
+    sales_amount = rng.randint(1000, 80000)
+
+    frozen_norm = min(frozen_amount / 30000, 1)
+    sales_norm = min(sales_amount / 80000, 1)
+    plaintiff_expectation = round(min(1, 0.6 * frozen_norm + 0.4 * sales_norm), 3)
+
     state = {
         "seed": seed,
         "rng": seed,
@@ -315,6 +323,9 @@ def init_game(seed=None):
             "evidence_issue": evidence_issue,
             "plaintiff_budget": plaintiff_budget,
             "plaintiff_goal": plaintiff_goal,
+            "frozen_amount": frozen_amount,
+            "sales_amount": sales_amount,
+            "plaintiff_expectation": plaintiff_expectation,
         },
         "review_materials": {
             "complaint": build_complaint_text(
@@ -383,24 +394,62 @@ def get_initial_position():
 
 def estimate_liability(outcome):
     title = outcome.get("title", "")
+    hc = g()["hidden_case"]
 
-    mapping = {
-        "代理终止 / 缺席判决": 30000,
-        "原告撤回推进": 0,
-        "低价和解成功": 3000,
-        "中等和解": 9000,
-        "和解条件不佳": 18000,
-        "Motion to Dismiss 获准": 0,
-        "Motion to Dismiss 部分成功": 5000,
-        "程序抗辩失败": 22000,
-        "禁令压力被显著削弱": 0,
-        "局部顶住禁令压力": 7000,
-        "禁令对抗失败": 25000,
-        "原告推进崩塌": 0,
-        "对方推进明显放缓": 5000,
-        "消耗战未奏效": 18000,
+    base_ranges = {
+        "代理终止 / 缺席判决": (26000, 32000),
+        "原告撤回推进": (0, 0),
+        "低价和解成功": (1500, 5000),
+        "中等和解": (5000, 12000),
+        "和解条件不佳": (12000, 22000),
+        "Motion to Dismiss 获准": (0, 0),
+        "Motion to Dismiss 部分成功": (2000, 8000),
+        "程序抗辩失败": (15000, 28000),
+        "禁令压力被显著削弱": (0, 2000),
+        "局部顶住禁令压力": (4000, 10000),
+        "禁令对抗失败": (18000, 30000),
+        "原告推进崩塌": (0, 0),
+        "对方推进明显放缓": (2000, 7000),
+        "消耗战未奏效": (12000, 22000),
     }
-    return mapping.get(title, 12000)
+
+    low, high = base_ranges.get(title, (8000, 16000))
+    liability = (low + high) // 2
+
+    # 商业体量修正
+    liability += int(hc["frozen_amount"] * 0.18)
+    liability += int(hc["sales_amount"] * 0.06)
+
+    # 原告预期修正
+    liability += int(6000 * hc["plaintiff_expectation"])
+
+    # 法律事实修正
+    if hc["forum_sale"]:
+        liability += 2500
+    else:
+        liability -= 1500
+
+    if hc["test_buy"]:
+        if hc["test_buy_strength"] == "strong":
+            liability += 3500
+        else:
+            liability += 1200
+    else:
+        liability -= 1800
+
+    if hc["evidence_issue"]:
+        liability -= 3000
+
+    # 玩家实际打出的压力修正
+    if "线索：Illinois forum contacts 不明确" in g()["facts_known"]:
+        liability -= 1200
+    if "线索：测购材料存在缺口" in g()["facts_known"] or "线索：未见明确测购" in g()["facts_known"]:
+        liability -= 1500
+    if "线索：证据可能存在时间线问题" in g()["facts_known"]:
+        liability -= 1800
+
+    liability = max(0, min(50000, liability))
+    return liability
 
 def get_final_position(liability, cost_spent):
     liability_quad = "赔偿低" if liability <= 5000 else "赔偿高"
@@ -611,6 +660,28 @@ def reveal_client_msg():
     g()["facts_known"].append(f"材料：{text}")
     add_history("阅读客户初步陈述", text)
     mark_used("review_client_msg")
+    g()["subphase_done"] = True
+
+def reveal_financials():
+    spend_client(ACTIONS_INFO["review_financials"]["cost"])
+    hc = g()["hidden_case"]
+
+    text = (
+        f"客户补充称：当前被冻结金额约为 ${hc['frozen_amount']:,}，"
+        f"涉案产品相关销售金额约为 ${hc['sales_amount']:,}。"
+    )
+
+    if hc["plaintiff_expectation"] >= 0.7:
+        signal = "线索：原告对获益金额预期较高"
+    elif hc["plaintiff_expectation"] >= 0.4:
+        signal = "线索：原告对获益金额预期中等"
+    else:
+        signal = "线索：原告对获益金额预期较低"
+
+    g()["facts_known"].append(f"材料：{text}")
+    g()["facts_known"].append(signal)
+    add_history("核实冻结金额与销售金额", text)
+    mark_used("review_financials")
     g()["subphase_done"] = True
 
 def investigate_sales():
@@ -1084,6 +1155,9 @@ def reveal_truths():
         f"底层事实：{'存在' if hc['test_buy'] else '不存在'}测购。",
         f"测购强度：{hc['test_buy_strength'] if hc['test_buy'] else '无'}。",
         f"底层事实：原告材料{'存在' if hc['evidence_issue'] else '不存在'}时间线/来源异常。",
+        f"冻结金额：约 ${hc['frozen_amount']:,}。",
+        f"相关销售金额：约 ${hc['sales_amount']:,}。",
+        f"原告初始获益预期：{hc['plaintiff_expectation']}",
         f"原告隐藏预算：约 ${max(hc['plaintiff_budget'], 0):,}（结局时口径）。",
         f"原告隐藏目标：{hc['plaintiff_goal']}。",
     ]
@@ -1186,7 +1260,7 @@ def render_phase():
     ph = g()["phase"]
 
     if ph == "intake":
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             disabled = used("review_complaint") or not can_pay(ACTIONS_INFO["review_complaint"]["cost"])
             if st.button("阅读 complaint 摘要", disabled=disabled, use_container_width=True):
@@ -1199,8 +1273,14 @@ def render_phase():
                 reveal_client_msg()
                 forced_end_check()
                 st.rerun()
+        with col3:
+            disabled = used("review_financials") or not can_pay(ACTIONS_INFO["review_financials"]["cost"])
+            if st.button("核实冻结金额与销售金额", disabled=disabled, use_container_width=True):
+                reveal_financials()
+                forced_end_check()
+                st.rerun()
 
-        if used("review_complaint") or used("review_client_msg"):
+        if used("review_complaint") or used("review_client_msg") or used("review_financials"):
             if st.button(next_phase_button(), use_container_width=True):
                 advance_phase()
                 st.rerun()

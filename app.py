@@ -753,14 +753,13 @@ def estimate_liability(outcome):
         return int(dmg["chosen_amount"] * 0.50)
 
 def get_final_position(liability, cost_spent):
-    if liability == 0:
-        liability_quad = "赔偿为零"
+    if liability <= 0:
+        liability_quad = "赔偿为零" if liability == 0 else "净收益为正"
     elif liability <= 5000:
         liability_quad = "赔偿低"
     else:
         liability_quad = "赔偿高"
     cost_quad = "消耗低" if cost_spent <= g()["initial_client_budget"] * 0.5 else "消耗高"
-
     return {
         "liability_quad": liability_quad,
         "cost_quad": cost_quad,
@@ -1829,33 +1828,260 @@ def evaluate_outcome():
 
     g()["path_scores"] = path_scores
 
-    # 记录 PI 是否被批准，进入 post_pi_negotiation 而不是直接结束
+    # PI 是否被批准
     pi_granted = (best_path == "inj" and best_score < 0.56) or (best_path == "attrition" and best_score < 0.52)
     g()["pi_granted"] = pi_granted
     g()["pi_ruling_out"] = out
-    g()["post_pi_phase"] = "post_pi_negotiation"
-    g()["phase"] = "post_pi_negotiation"
-    g()["subphase_done"] = False
 
-    # 初始化 post_pi 报价
     dmg = compute_copyright_damages()
-    base = dmg["chosen_amount"]
-    if pi_granted:
-        offer = int(base * random.uniform(0.75, 0.95))
-    elif best_path == "inj" and best_score >= 0.70:
-        offer = int(base * random.uniform(0.12, 0.22))
-    elif best_path == "inj":
-        offer = int(base * random.uniform(0.30, 0.50))
-    else:
-        offer = int(base * random.uniform(0.20, 0.40))
 
-    g()["current_demand"] = max(500, offer)
-    g()["post_pi_initial_demand"] = g()["current_demand"]
+    if not pi_granted:
+        # PI 失败或未进入 PI 路线：触发结局池
+        trigger_pi_loss_ending(dmg)
+    else:
+        # PI 被批准：进入谈判阶段
+        g()["phase"] = "post_pi_negotiation"
+        g()["subphase_done"] = False
+        base = dmg["chosen_amount"]
+        if best_score < 0.40:
+            offer = int(base * random.uniform(0.85, 0.98))
+        else:
+            offer = int(base * random.uniform(0.70, 0.88))
+        g()["current_demand"] = max(500, offer)
+        g()["post_pi_initial_demand"] = g()["current_demand"]
+        add_history(
+            "PI 裁决后原告报价",
+            f"禁令已获批准。原告律师随即发来邮件，提出和解要求 ${g()['current_demand']:,}。"
+            "你现在可以接受、砍价或选择拖延。"
+        )
+
+def trigger_pi_loss_ending(dmg):
+    hc = g()["hidden_case"]
+    rng = random.Random(g()["seed"] + g()["round"] * 3571)
+    cost_spent = max(0, g()["initial_client_budget"] - g()["client_budget"])
+
+    # 权重计算
+    w1 = 45  # 黯然撤诉
+    w2 = 22  # 象征性和解
+    w3 = 14  # §505 律师费偿还
+    w4 = 5   # Rule 11
+    w5 = 3   # 版权作品系抄袭
+    w6 = 2   # 权属证明系造假
+    w7 = 3   # 原告律师撤出代理
+    w8 = 2   # 被告反诉反客为主
+
+    # 底层变量调权
+    if hc["plaintiff_budget"] / max(hc["plaintiff_budget_initial"], 1) < 0.35:
+        w1 += 15
+        w7 += 4
+    if hc["plaintiff_goal"] == "freeze_fast":
+        w1 += 8
+    if g()["opponent_key"] == "conservative":
+        w1 += 6
+        w2 += 4
+    if hc["evidence_issue"]:
+        w3 += 8
+        w4 += 4
+        w6 += 2
+        w1 -= 5
+    if hc["ownership_clarity"] == "weak":
+        w4 += 3
+        w6 += 3
+        w5 += 2
+    if hc["prior_art_density"] == "high":
+        w5 += 3
+    if g()["opponent_key"] == "aggressive":
+        w7 += 4
+        w3 += 3
+    if (hc["independent_creation_support"] == "strong"
+            and hc["similarity_to_claimed"] < 45
+            and hc["evidence_issue"]):
+        w8 += 5
+
+    # 结局八严格触发条件不满足时归零
+    if not (hc["independent_creation_support"] == "strong"
+            and hc["similarity_to_claimed"] < 45
+            and hc["evidence_issue"]):
+        w8 = 0
+
+    weights = [w1, w2, w3, w4, w5, w6, w7, w8]
+    total = sum(weights)
+    roll = rng.uniform(0, total)
+    cumulative = 0
+    chosen = 1
+    for i, w in enumerate(weights):
+        cumulative += w
+        if roll <= cumulative:
+            chosen = i + 1
+            break
+
+    if chosen == 1:
+        _pi_ending_dismiss(dmg, cost_spent)
+    elif chosen == 2:
+        _pi_ending_token_settlement(dmg, cost_spent, rng)
+    elif chosen == 3:
+        _pi_ending_505_fees(dmg, cost_spent)
+    elif chosen == 4:
+        _pi_ending_rule11(dmg, cost_spent)
+    elif chosen == 5:
+        _pi_ending_plaintiff_copied(dmg, cost_spent)
+    elif chosen == 6:
+        _pi_ending_fraudulent_registration(dmg, cost_spent)
+    elif chosen == 7:
+        _pi_ending_lawyer_withdrawal(dmg, cost_spent)
+    else:
+        _pi_ending_counterclaim(dmg, cost_spent)
+
+def _pi_ending_dismiss(dmg, cost_spent):
     add_history(
-        "PI 裁决后原告报价",
-        f"PI 程序结束。原告律师发来邮件，提出和解报价 ${g()['current_demand']:,}。"
-        f"{'禁令已获批准，' if pi_granted else ''}你现在可以接受、砍价或选择拖延。"
+        "原告动向",
+        "PI 被驳回后，原告律师发来一封措辞强硬的信函，声称保留一切追诉权利，并表示将评估后续程序选项。"
+        "此后数周，对方陷入沉寂，不再有任何实质性推进。"
+        "第四十二天，法院收到原告提交的 Notice of Voluntary Dismissal without Prejudice。"
+        "案件就此落幕，双方各自承担律师费，无任何赔偿。"
     )
+    end_with_outcome({
+        "title": "原告黯然撤诉",
+        "kind": "胜利结局",
+        "score": 88,
+        "route": "PI 失败后原告撤诉",
+        "summary": "PI 被驳回后，原告评估继续推进的成本与风险，最终选择 Voluntary Dismissal。零赔偿，律师费各自承担。",
+        "liability": 0,
+        "damage_detail": dmg,
+    })
+
+def _pi_ending_token_settlement(dmg, cost_spent, rng):
+    amount = rng.randint(500, 2000)
+    add_history(
+        "原告主动接触",
+        "PI 裁决一周后，对方律师发来邮件，措辞从此前的强硬转为务实。"
+        f"对方提出以 ${amount:,} 了结本案，条件是双方签署保密和解协议，互不追究任何后续责任。"
+        "你方接受了这一条件。案件以最小代价收场，原告保住了一点颜面，你方则以极低成本脱身。"
+    )
+    end_with_outcome({
+        "title": "象征性和解了结",
+        "kind": "较好结局",
+        "score": 82,
+        "route": "PI 失败后象征性和解",
+        "summary": f"原告在 PI 失败后主动寻求体面退出，双方以 ${amount:,} 的象征性金额签署保密和解协议。",
+        "liability": amount,
+        "damage_detail": dmg,
+    })
+
+def _pi_ending_505_fees(dmg, cost_spent):
+    add_history(
+        "案件反转",
+        "原告无视 PI 失败的信号，坚持推进进入 discovery 阶段。"
+        "然而随着证据披露程序的展开，原告版权登记材料的时间线矛盾、测购记录的真实性问题被逐一暴露。"
+        "法院在最终裁决中认定本案系 objectively unreasonable litigation，"
+        f"依据 17 U.S.C. § 505 判决原告偿还被告律师费 ${cost_spent:,}。"
+        "你方不仅零赔偿脱身，还收回了全部诉讼成本。"
+    )
+    end_with_outcome({
+        "title": "§505 律师费全额偿还",
+        "kind": "胜利结局",
+        "score": 96,
+        "route": "§505 律师费偿还",
+        "summary": f"原告坚持推进后证据崩塌，法院依据 17 U.S.C. § 505 判决原告偿还被告律师费 ${cost_spent:,}。净收益为正。",
+        "liability": -cost_spent,
+        "damage_detail": dmg,
+    })
+
+def _pi_ending_rule11(dmg, cost_spent):
+    add_history(
+        "法院介入",
+        "在后续程序中，法院对原告提交材料的真实性产生严重疑虑。"
+        "法官主动发出 Order to Show Cause，要求原告律师就若干关键证据的来源和真实性作出书面解释。"
+        "原告律师的答复未能消除法院的疑虑。"
+        "法院最终依据 Fed. R. Civ. P. 11 对原告律师处以 sanctions，"
+        f"金额 ${int(cost_spent * 0.8):,}，并驳回案件。原告律师事务所陷入严重的声誉危机。"
+    )
+    sanctions = int(cost_spent * 0.8)
+    end_with_outcome({
+        "title": "Rule 11 Sanctions",
+        "kind": "胜利结局",
+        "score": 97,
+        "route": "Rule 11 制裁",
+        "summary": f"法院认定原告律师提交材料存在虚假陈述，依 Rule 11 处以 sanctions ${sanctions:,}，案件驳回。",
+        "liability": -sanctions,
+        "damage_detail": dmg,
+    })
+
+def _pi_ending_plaintiff_copied(dmg, cost_spent):
+    add_history(
+        "戏剧性反转",
+        "Discovery 进入第二周，被告方律师在整理在先作品资料时意外发现：原告所谓的'原创版权图片'，"
+        "与一张发布于更早时间的第三方产品图存在高度相似，像素级别的构图几乎一致。"
+        "被告方随即提交 Motion for Summary Judgment，附上详尽的比对材料。"
+        "原告在收到动议后沉默数日，随后提交 Voluntary Dismissal with Prejudice。"
+        "案件以原告完全撤诉结束，原告不得就同一事项再次起诉，其版权登记的效力也受到质疑。"
+    )
+    end_with_outcome({
+        "title": "原告版权作品系抄袭",
+        "kind": "胜利结局",
+        "score": 99,
+        "route": "原告版权作品被发现系抄袭",
+        "summary": "Discovery 揭露原告版权图片实为抄袭第三方在先作品。原告被迫以 Dismissal with Prejudice 撤案，零赔偿。",
+        "liability": 0,
+        "damage_detail": dmg,
+    })
+
+def _pi_ending_fraudulent_registration(dmg, cost_spent):
+    add_history(
+        "注册造假曝光",
+        "在被告方律师对原告版权登记文件展开详查后，发现登记申请中的'创作完成日期'与原告此前在其他平台上传的图片时间戳存在明显矛盾。"
+        "被告方随即向版权局（U.S. Copyright Office）提交调查请求，并在法庭上申请对原告进行存证取证。"
+        "面对双线压力，原告律师建议撤案。原告在提交 Voluntary Dismissal 后，"
+        "其版权登记申请被版权局列入复查名单，可能面临撤销。"
+    )
+    end_with_outcome({
+        "title": "原告版权权属证明系造假",
+        "kind": "胜利结局",
+        "score": 99,
+        "route": "原告登记造假曝光",
+        "summary": "版权登记时间戳矛盾被揭露，原告撤案，登记申请进入版权局复查程序。零赔偿。",
+        "liability": 0,
+        "damage_detail": dmg,
+    })
+
+def _pi_ending_lawyer_withdrawal(dmg, cost_spent):
+    add_history(
+        "对方阵营瓦解",
+        "PI 失败后，原告委托人开始质疑代理律师的判断，双方关系迅速恶化。"
+        "原告以案件走势不符预期为由，拒绝继续支付后续律师费。"
+        "原告律师向法院提交 Motion to Withdraw as Counsel，理由为委托关系不可修复地破裂。"
+        "法院准许撤出申请。此后原告以 pro se 身份出庭，能力捉襟见肘，"
+        "案件因持续未能推进而被法院以 Failure to Prosecute 为由驳回。"
+    )
+    end_with_outcome({
+        "title": "原告律师撤出代理",
+        "kind": "胜利结局",
+        "score": 92,
+        "route": "原告律师因费用纠纷撤出",
+        "summary": "原告拒付律师费导致代理关系破裂，律师撤出后案件因 Failure to Prosecute 被驳回。零赔偿。",
+        "liability": 0,
+        "damage_detail": dmg,
+    })
+
+def _pi_ending_counterclaim(dmg, cost_spent):
+    add_history(
+        "攻守易位",
+        "在系统整理所有已知证据后，被告方律师认为时机成熟，正式提出 Declaratory Judgment of Non-Infringement 反诉，"
+        "并附带 Abuse of Process 主张，要求法院认定原告以诉讼作为商业打压工具。"
+        "原告在收到反诉状后，意识到继续推进可能带来更大风险，"
+        "主动申请以 Dismissal with Prejudice 撤案，并就律师费问题与被告方达成不公开协议。"
+        "本案成为你执业以来最完整的一次逆转。"
+    )
+    end_with_outcome({
+        "title": "反诉反客为主",
+        "kind": "胜利结局",
+        "score": 100,
+        "route": "反诉逆转",
+        "summary": "被告提出 DJ 反诉及 Abuse of Process 主张，原告被迫以 Dismissal with Prejudice 撤案并私下赔付律师费。",
+        "liability": -int(cost_spent * 0.5),
+        "damage_detail": dmg,
+    })
+
 
 def compute_default_judgment():
     dmg = compute_copyright_damages()
@@ -2612,11 +2838,21 @@ def render_result():
 
     fc1, fc2, fc3 = st.columns(3)
     with fc1:
-        st.metric("赔偿 / 和解金额", f"${liability:,}")
+        if liability < 0:
+            st.metric("律师费偿还收入", f"+${-liability:,}")
+        elif liability == 0:
+            st.metric("赔偿 / 和解金额", "$0")
+        else:
+            st.metric("赔偿 / 和解金额", f"${liability:,}")
     with fc2:
         st.metric("累计律师费消耗", f"${cost_spent:,}")
     with fc3:
-        st.metric("净总损失", f"${net_loss:,}")
+        if net_loss < 0:
+            st.metric("净结果", f"+${-net_loss:,}（净收益）")
+        elif net_loss == 0:
+            st.metric("净结果", "$0")
+        else:
+            st.metric("净总损失", f"${net_loss:,}")
 
     if "damage_detail" in out:
         dmg = out["damage_detail"]

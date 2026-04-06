@@ -54,19 +54,22 @@ OPPONENT_PROFILES = {
     "aggressive": {
         "name": "激进型对手",
         "risk_up_each_round": 9,
-        "budget_range": (7000, 12000),
+        "budget_range": (28000, 45000),
+        "bluff_probability": 0.40,
         "description": "动作快，敢压强度，愿意把事情推到极限。",
     },
     "conservative": {
         "name": "保守型对手",
         "risk_up_each_round": 5,
-        "budget_range": (5000, 9000),
+        "budget_range": (18000, 28000),
+        "bluff_probability": 0.10,
         "description": "节奏较慢，更在意成本控制。",
     },
     "gray": {
         "name": "灰色型对手",
         "risk_up_each_round": 7,
-        "budget_range": (6000, 11000),
+        "budget_range": (22000, 35000),
+        "bluff_probability": 0.25,
         "description": "动作不一定快，但更可能包装材料或补奇怪证据。",
     },
 }
@@ -218,6 +221,47 @@ FACT_TEMPLATES = {
     "ownership_weak": [
         "你核查后发现，原告的版权登记记录存在明显问题，要么登记人与起诉人不一致，要么来源文件缺失严重。",
         "原告提交的权属材料漏洞较多，登记链条不完整，攻击权属基础可以作为主力论点之一。",
+    ],
+}
+
+PLAINTIFF_EMAILS = {
+    "strong": [
+        "我方已就贵方提出的各项程序性主张进行充分研究，认为相关论据缺乏依据。我方将继续全力推进本案，并保留就贵方不当拖延申请费用偿还的一切权利。",
+        "贵方迄今为止提出的抗辩并未动摇我方在本案中的立场。我方委托人已明确授权，将本案推进至最终裁决，无论耗时多久。",
+        "我方注意到贵方持续提出程序性障碍，但本案事实与法律依据均对我方有利。我方不打算在此节点接受任何不合理的和解条件。",
+    ],
+    "strong_bluff": [
+        "我方对本案走向保持高度信心，并已做好充分的后续推进准备。贵方若继续拖延，只会增加最终裁决时的赔偿金额。",
+        "我方委托人对本案结果持乐观态度，我方律师团队已全面就绪。建议贵方认真评估继续应诉的成本与风险。",
+        "我方已就本案所有可能的后续发展做好充分预案。若贵方无意在合理条件下了结本案，我方将毫不犹豫地继续推进。",
+    ],
+    "neutral": [
+        "我方注意到双方在本案上均已投入相当资源。如贵方有意在合理条件下尽快了结，我方愿意在有限时间窗口内探讨和解可能性。",
+        "我方委托人对本案仍持积极推进态度，但亦认识到诉讼程序对双方均有一定成本。如有和解意向，请及时告知。",
+        "我方已就本案后续程序作出相应安排。在此告知贵方，若双方有意就和解条件进行初步沟通，我方可以配合安排。",
+    ],
+    "soft": [
+        "考虑到诉讼成本对双方的持续影响，我方委托人授权就本案和解事宜进行实质性讨论。请贵方尽快告知是否有意向。",
+        "我方认为，在当前程序节点，双方通过协商了结本案对各方均属合理选择。我方愿意就具体条件展开对话。",
+        "我方委托人希望以务实态度处理本案。如贵方有意向在近期内达成和解，请与我方联系以安排进一步沟通。",
+    ],
+    "urgent": [
+        "我方委托人希望在近期内了结本案相关事宜。如贵方能在本周内给出回应，我方可就和解条件作出一定让步，请尽快与我方联系。",
+        "出于对双方均有利的考量，我方建议在当前节点认真讨论和解方案。我方授权提供一定的条件灵活性，但此窗口期有限。",
+        "我方委托人已表示希望尽快了结本案。如贵方有意在合理框架内达成协议，请务必尽快回复，以免错过当前时间窗口。",
+    ],
+    "mtd_denied_hardened": [
+        "贵方的程序性动议已被法院驳回，本案将继续向实体问题推进。我方委托人对此结果早有预期，后续推进计划已全面就绪。",
+        "法院裁决已明确否定了贵方的程序性主张。我方将在此基础上全力推进禁令程序，并就本案实体问题寻求完整救济。",
+        "程序性障碍已被清除。我方委托人对案件走向充满信心，并已准备好就侵权事实展开全面举证。",
+    ],
+    "mtd_partial_recalibrate": [
+        "我方注意到法院就程序性动议作出的裁决。尽管部分主张未获全部支持，我方对本案实体问题的立场并未改变，将继续推进。",
+        "法院的裁决结果并未实质影响我方对本案的整体判断。我方将在现有程序框架内继续寻求完整救济。",
+    ],
+    "bankrupt_final": [
+        "我方委托人经审慎评估后，认为在当前条件下达成和解符合各方利益。我方现正式授权就和解条件展开实质性谈判，请贵方尽快回复。",
+        "综合考量各方面因素，我方委托人希望在当前节点了结本案。我方愿意就和解金额作出实质性让步，请贵方告知可以接受的条件范围。",
     ],
 }
 
@@ -401,6 +445,8 @@ def init_game(seed=None):
         "demand_stage_seen": [],
         "counter_offer_last": None,
         "outcome": None,
+        "plaintiff_last_offer_round": -1,
+        "plaintiff_weakened": False,
         "history": [],
         "facts_known": [],
         "research_known": [],
@@ -414,6 +460,7 @@ def init_game(seed=None):
             "test_buy_strength": test_buy_strength,
             "evidence_issue": evidence_issue,
             "plaintiff_budget": plaintiff_budget,
+            "plaintiff_budget_initial": plaintiff_budget,
             "plaintiff_goal": plaintiff_goal,
             "frozen_amount": frozen_amount,
             "sales_amount": sales_amount,
@@ -649,13 +696,145 @@ def risk_text(v):
         return "高"
     return "极高"
 
+def generate_plaintiff_email():
+    hc = g()["hidden_case"]
+    pb = hc["plaintiff_budget"]
+    initial_pb = hc["plaintiff_budget_initial"]
+    budget_ratio = pb / max(initial_pb, 1)
+    opp_key = g()["opponent_key"]
+    opp = OPPONENT_PROFILES[opp_key]
+    mtd_result = g().get("mtd_result")
+    phase = g()["phase"]
+    rng = random.Random(g()["seed"] + g()["round"] * 997)
+
+    # 原告预算归零：无论如何只发软信号
+    if pb <= 0:
+        return rng.choice(PLAINTIFF_EMAILS["bankrupt_final"])
+
+    # MTD 被完全驳回：强硬跳变
+    if mtd_result == "denied" and phase in ["pi_motion", "pi_opposition", "pi_reply", "pi_ruling"]:
+        return rng.choice(PLAINTIFF_EMAILS["mtd_denied_hardened"])
+
+    # MTD 部分成功后重新校准
+    if mtd_result == "partial" and phase in ["pi_motion", "pi_opposition"]:
+        return rng.choice(PLAINTIFF_EMAILS["mtd_partial_recalibrate"])
+
+    # 根据预算比例确定真实状态
+    if budget_ratio >= 0.70:
+        true_tone = "strong"
+    elif budget_ratio >= 0.45:
+        true_tone = "neutral"
+    elif budget_ratio >= 0.22:
+        true_tone = "soft"
+    else:
+        true_tone = "urgent"
+
+    # 虚张声势判断（预算归零时不适用，已在上面处理）
+    bluff_chance = opp["bluff_probability"]
+    # gray 型在预算充足时也可能发软信号试探
+    if opp_key == "gray" and budget_ratio >= 0.60 and rng.random() < 0.20:
+        return rng.choice(PLAINTIFF_EMAILS["neutral"])
+
+    if true_tone in ["soft", "urgent"] and rng.random() < bluff_chance:
+        # 虚张声势：发强硬邮件
+        return rng.choice(PLAINTIFF_EMAILS["strong_bluff"])
+
+    return rng.choice(PLAINTIFF_EMAILS[true_tone])
+
 def plaintiff_signal():
-    pb = g()["hidden_case"]["plaintiff_budget"]
-    if pb <= 3500:
-        return "对方近期推进速度开始放缓。"
-    if pb <= 5500:
-        return "对方仍在推进，但追加投入的力度似乎不如前期。"
-    return "对方当前仍有继续投入资源的迹象。"
+    return generate_plaintiff_email()
+
+def plaintiff_signal_decoded():
+    """仅在玩家做过 research_settle 后显示的解码提示"""
+    hc = g()["hidden_case"]
+    pb = hc["plaintiff_budget"]
+    initial_pb = hc["plaintiff_budget_initial"]
+    budget_ratio = pb / max(initial_pb, 1)
+    if budget_ratio >= 0.65:
+        return "你注意到对方近期补充材料的频率仍然较高，推进节奏未见明显松弛。"
+    elif budget_ratio >= 0.40:
+        return "你注意到对方推进节奏有所放缓，补充材料的力度不如前期。"
+    elif budget_ratio >= 0.18:
+        return "你注意到对方近期动作明显减少，追加材料的频率已显著下降。"
+    else:
+        return "你注意到对方几乎停止了新的程序动作，推进能力似乎已严重受限。"
+
+def plaintiff_initiative_offer():
+    """原告主动出价逻辑，在 advance_round 时调用"""
+    if g()["outcome"] is not None:
+        return
+    hc = g()["hidden_case"]
+    pb = hc["plaintiff_budget"]
+    initial_pb = hc["plaintiff_budget_initial"]
+    budget_ratio = pb / max(initial_pb, 1)
+    opp_key = g()["opponent_key"]
+    phase = g()["phase"]
+    rng = random.Random(g()["seed"] + g()["round"] * 1031)
+
+    # 各阶段原告主动出价的预算阈值
+    thresholds = {
+        "aggressive": 0.28,
+        "conservative": 0.42,
+        "gray": 0.35,
+    }
+    threshold = thresholds[opp_key]
+
+    # 只在实体阶段开始后才主动出价
+    if phase not in [
+        "mtd_motion", "mtd_opposition", "mtd_reply", "mtd_ruling",
+        "pi_motion", "pi_opposition", "pi_reply", "pi_ruling"
+    ]:
+        return
+
+    if budget_ratio > threshold:
+        return
+
+    # 避免重复在同一 round 出价
+    last_offer_round = g().get("plaintiff_last_offer_round", -1)
+    if g()["round"] - last_offer_round < 2:
+        return
+
+    stage = f"plaintiff_initiative_{g()['round']}"
+    if stage in g()["demand_stage_seen"]:
+        return
+
+    # 原告主动出价时折扣更大，模拟希望尽快收场
+    discount = 0.55 + budget_ratio * 0.30
+    base_demand = compute_current_demand("pre_pi")
+    offer = max(500, int(base_demand * discount))
+
+    g()["current_demand"] = offer
+    g()["settlement_history"].append({
+        "stage": stage,
+        "label": "原告主动提出和解",
+        "demand": offer,
+    })
+    g()["demand_stage_seen"].append(stage)
+    g()["plaintiff_last_offer_round"] = g()["round"]
+
+    add_history(
+        "原告主动接触",
+        f"对方律师主动发来邮件，表示愿意就本案和解条件展开讨论。当前报价：${offer:,}。"
+    )
+
+def plaintiff_reinforce_budget(stage):
+    """原告在关键节点追加预算"""
+    hc = g()["hidden_case"]
+    opp_key = g()["opponent_key"]
+    rng = random.Random(g()["seed"] + hash(stage) % 9999)
+
+    reinforce_map = {
+        "aggressive": (6000, 12000),
+        "conservative": (2000, 5000),
+        "gray": (3000, 8000),
+    }
+    low, high = reinforce_map[opp_key]
+    amount = rng.randint(low, high)
+    hc["plaintiff_budget"] += amount
+    add_history(
+        "对方追加投入",
+        f"对方在当前节点追加了推进资源，后续压力可能上升。"
+    )
 
 def phase_name():
     mapping = {
@@ -740,15 +919,18 @@ def forced_end_check():
         return
 
     if g()["hidden_case"]["plaintiff_budget"] <= 0:
-        end_with_outcome({
-            "title": "原告撤回推进",
-            "kind": "胜利结局",
-            "score": 86,
-            "route": "击穿对方预算",
-            "summary": (
-                "对方未能继续维持推进强度。其后续补充材料和程序动作逐渐停滞，案件最终被主动撤回或停止推进。"
-            ),
-        })
+        if g()["plaintiff_weakened"] and g()["phase"] in [
+            "mtd_ruling", "pi_motion", "pi_opposition", "pi_reply", "pi_ruling"
+        ]:
+            end_with_outcome({
+                "title": "原告撤回推进",
+                "kind": "胜利结局",
+                "score": 86,
+                "route": "击穿对方预算",
+                "summary": (
+                    "对方未能继续维持推进强度。其后续补充材料和程序动作逐渐停滞，案件最终被主动撤回或停止推进。"
+                ),
+            })
         return
 
 def advance_round():
@@ -761,6 +943,18 @@ def advance_round():
     g()["risk"] = min(100, g()["risk"] + OPPONENT_PROFILES[g()["opponent_key"]]["risk_up_each_round"])
     spend_plaintiff(random.randint(700, 1500))
     unlock_story_round()
+
+    # 原告预算归零后标记为 weakened，不再直接终结
+    hc = g()["hidden_case"]
+    if hc["plaintiff_budget"] <= 0 and not g()["plaintiff_weakened"]:
+        g()["plaintiff_weakened"] = True
+        hc["plaintiff_budget"] = 0
+        add_history(
+            "对方推进能力严重受限",
+            "你判断对方已接近推进极限。后续程序中对方动作将明显减少，裁决天平将向你方倾斜。"
+        )
+
+    plaintiff_initiative_offer()
     forced_end_check()
 
 def current_guidance():
@@ -1330,6 +1524,19 @@ def evaluate_outcome():
         attrition_score += 0.22
         settle_score += 0.12
 
+    if g()["plaintiff_weakened"]:
+        attrition_score += 0.18
+        settle_score += 0.10
+        inj_score += 0.08
+
+    # MTD result carry-over into PI evaluation
+    mtd_result = g().get("mtd_result")
+    if mtd_result == "denied":
+        inj_score -= 0.10
+        settle_score -= 0.06
+    elif mtd_result == "partial":
+        inj_score -= 0.04
+
     if strat == "mtd":
         mtd_score += 0.16
     if strat == "inj":
@@ -1680,8 +1887,10 @@ def render_sidebar():
     st.sidebar.write(f"态度：{g()['client']['attitude']}")
     st.sidebar.write(f"目标：{g()['client']['goal']}")
 
-    st.sidebar.markdown("### 对方信号")
-    st.sidebar.write(plaintiff_signal())
+    st.sidebar.markdown("### 对方律师来函")
+    st.sidebar.info(plaintiff_signal())
+    if used("research_settle"):
+        st.sidebar.caption(f"（你的判断：{plaintiff_signal_decoded()}）")
 
     st.sidebar.markdown("### 已获得材料")
     for x in g()["facts_known"][-6:]:
@@ -1950,6 +2159,24 @@ def render_phase():
                 add_history("MTD 裁决", text)
                 g()["phase"] = "pi_motion"
                 g()["subphase_done"] = False
+
+                # MTD 被驳回：原告重新评估胜算，追加预算，提高报价
+                if g()["mtd_result"] == "denied":
+                    plaintiff_reinforce_budget("mtd_denied")
+                    # 提高当前报价 30%–40%
+                    if g()["current_demand"] is not None:
+                        boost = random.uniform(1.30, 1.40)
+                        g()["current_demand"] = int(g()["current_demand"] * boost)
+                        add_history(
+                            "对方调高报价",
+                            f"MTD 被驳回后，对方重新评估胜算，将当前和解要求上调至 ${g()['current_demand']:,}。"
+                        )
+                # MTD 部分成功：原告小幅追加，报价轻微上浮
+                elif g()["mtd_result"] == "partial":
+                    spend_plaintiff(-random.randint(1000, 3000))  # 小幅补充
+                    if g()["current_demand"] is not None:
+                        boost = random.uniform(1.05, 1.15)
+                        g()["current_demand"] = int(g()["current_demand"] * boost)
 
             forced_end_check()
             st.rerun()

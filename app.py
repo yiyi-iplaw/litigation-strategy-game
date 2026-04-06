@@ -161,6 +161,77 @@ FACT_TEMPLATES = {
     ],
 }
 
+COMPLAINT_BLOCKS = {
+    "jurisdiction_strong": [
+        "Plaintiff alleges that Defendant sold products into Illinois and refers to several Illinois-directed transactions.",
+        "Complaint states that Defendant made sales into Illinois and identifies multiple transactions allegedly tied to Illinois consumers.",
+    ],
+    "jurisdiction_weak": [
+        "Complaint refers to nationwide online availability, but does not clearly identify Illinois transactions.",
+        "Plaintiff alleges forum contacts in general terms, without clearly setting out specific Illinois transactions.",
+    ],
+    "testbuy_strong": [
+        "Plaintiff states it conducted an Illinois test purchase and includes an order page, shipping details, and an order identifier.",
+        "The pleading describes a completed Illinois test buy with screenshots reflecting order and delivery information.",
+    ],
+    "testbuy_weak": [
+        "Plaintiff states that it conducted a test purchase, but the pleading does not clearly identify an order number or shipping confirmation.",
+        "The complaint refers to a supposed Illinois test buy, but the supporting detail is limited.",
+    ],
+    "testbuy_none": [
+        "The complaint does not clearly attach a completed Illinois test purchase record.",
+        "No complete Illinois test purchase record appears on the face of the pleading.",
+    ],
+    "urgency_high": [
+        "Plaintiff emphasizes ongoing sales, platform risk, and the possibility of continuing harm absent immediate relief.",
+        "The complaint repeatedly stresses continuing sales and irreparable harm tied to platform exposure.",
+    ],
+    "urgency_mid": [
+        "Plaintiff asserts continuing harm and requests immediate relief, though the discussion of urgency is relatively brief.",
+        "The pleading invokes ongoing harm and platform risk, but the urgency allegations are not especially detailed.",
+    ],
+    "evidence_strong": [
+        "Attached exhibits include screenshots, product comparisons, and transaction-related images.",
+        "The pleading is accompanied by screenshots and image-based exhibits that purport to support the allegations.",
+    ],
+    "evidence_weak": [
+        "Some screenshots appear cropped, and the exhibits do not obviously reveal full source information.",
+        "The exhibits include screenshots, but they do not clearly disclose full metadata or source context.",
+    ],
+}
+
+def build_complaint_text(hidden_case, rng):
+    parts = []
+
+    # forum contacts
+    if hidden_case["forum_sale"]:
+        parts.append(rng.choice(COMPLAINT_BLOCKS["jurisdiction_strong"]))
+    else:
+        parts.append(rng.choice(COMPLAINT_BLOCKS["jurisdiction_weak"]))
+
+    # test buy
+    if hidden_case["test_buy"]:
+        if hidden_case["test_buy_strength"] == "strong":
+            parts.append(rng.choice(COMPLAINT_BLOCKS["testbuy_strong"]))
+        else:
+            parts.append(rng.choice(COMPLAINT_BLOCKS["testbuy_weak"]))
+    else:
+        parts.append(rng.choice(COMPLAINT_BLOCKS["testbuy_none"]))
+
+    # urgency
+    if hidden_case["plaintiff_goal"] == "freeze_fast":
+        parts.append(rng.choice(COMPLAINT_BLOCKS["urgency_high"]))
+    else:
+        parts.append(rng.choice(COMPLAINT_BLOCKS["urgency_mid"]))
+
+    # evidence
+    if hidden_case["evidence_issue"]:
+        parts.append(rng.choice(COMPLAINT_BLOCKS["evidence_weak"]))
+    else:
+        parts.append(rng.choice(COMPLAINT_BLOCKS["evidence_strong"]))
+
+    return " ".join(parts)
+
 ACTIONS_INFO = {
     "review_complaint": {"cost": 400, "type": "review", "label": "阅读 complaint 摘要"},
     "review_client_msg": {"cost": 300, "type": "review", "label": "阅读客户初步陈述"},
@@ -200,6 +271,7 @@ def init_game(seed=None):
     test_buy = rng.random() < 0.50
     test_buy_strength = "strong" if (test_buy and rng.random() < 0.55) else "weak"
     evidence_issue = rng.random() < (0.35 if opponent_key == "gray" else 0.18)
+    plaintiff_goal = rng.choice(["freeze_fast", "settle_fast", "pressure_defendant"])
 
     state = {
         "seed": seed,
@@ -233,14 +305,19 @@ def init_game(seed=None):
             "test_buy_strength": test_buy_strength,
             "evidence_issue": evidence_issue,
             "plaintiff_budget": plaintiff_budget,
-            "plaintiff_goal": rng.choice(["freeze_fast", "settle_fast", "pressure_defendant"]),
+            "plaintiff_goal": plaintiff_goal,
         },
         "review_materials": {
-            "complaint": rng.choice([
-                "complaint 强调 defendant sold into Illinois，但对具体订单和证据细节写得并不充分。",
-                "complaint 的主要逻辑是持续侵害和平台风险，但对本州联系的展开相对有限。",
-                "complaint 试图把线上可达性、本州影响和平台紧急性捆在一起。",
-            ]),
+            "complaint": build_complaint_text(
+                {
+                    "forum_sale": forum_sale,
+                    "test_buy": test_buy,
+                    "test_buy_strength": test_buy_strength,
+                    "evidence_issue": evidence_issue,
+                    "plaintiff_goal": plaintiff_goal,
+                },
+                rng
+            ),
             "client_msg": rng.choice([
                 "客户称图片来自供应商，自己并未专门面向 Illinois 投放广告。",
                 "客户表示目前最担心的是链接被冻结，因为这个产品占近期销售较高比例。",
@@ -405,7 +482,29 @@ def current_guidance():
 def reveal_complaint():
     spend_client(ACTIONS_INFO["review_complaint"]["cost"])
     text = g()["review_materials"]["complaint"]
+
+    hc = g()["hidden_case"]
+
+    # 👉 把 complaint 的结构信息写入系统（核心改动）
+    if hc["forum_sale"]:
+        g()["facts_known"].append("线索：可能存在 Illinois forum contacts")
+    else:
+        g()["facts_known"].append("线索：Illinois forum contacts 不明确")
+
+    if hc["test_buy"]:
+        if hc["test_buy_strength"] == "strong":
+            g()["facts_known"].append("线索：测购材料较完整")
+        else:
+            g()["facts_known"].append("线索：测购材料存在缺口")
+    else:
+        g()["facts_known"].append("线索：未见明确测购")
+
+    if hc["evidence_issue"]:
+        g()["facts_known"].append("线索：证据可能存在时间线问题")
+
+    # 👉 原始 complaint 文本仍然保留
     g()["facts_known"].append(f"材料：{text}")
+
     add_history("阅读 complaint 摘要", text)
     mark_used("review_complaint")
     g()["subphase_done"] = True
@@ -567,21 +666,21 @@ def evaluate_outcome():
     settle_score = 0.25
     attrition_score = 0.25
 
-    if contains_any(fk, ["暂未发现 Illinois", "没有检索到明确指向 Illinois", "未出现 Illinois 地址订单"]):
+    if "线索：Illinois forum contacts 不明确" in fk:
         mtd_score += 0.26
         settle_score += 0.08
-    if contains_any(fk, ["出现数笔 Illinois", "Illinois 收货地址订单", "本州交易记录"]):
+    if "线索：可能存在 Illinois forum contacts" in fk:
         mtd_score -= 0.25
         inj_score -= 0.05
 
-    if contains_any(fk, ["未见明确测购痕迹", "暂未看到完整的 Illinois 测购记录", "未附订单编号"]):
+    if "线索：未见明确测购" in fk or "线索：测购材料存在缺口" in fk:        
         mtd_score += 0.12
         inj_score += 0.08
-    if contains_any(fk, ["附有下单页面、收货信息和订单编号", "response draft 中出现较完整的测购描述"]):
+    if "线索：测购材料较完整" in fk:
         mtd_score -= 0.16
         inj_score -= 0.08
 
-    if contains_any(fk, ["时间戳与 complaint 叙述前后不一致", "生成时间与其声称的取证时间存在明显错位", "缺少原始来源链条"]):
+    if "线索：证据可能存在时间线问题" in fk:
         inj_score += 0.24
         settle_score += 0.14
         mtd_score += 0.08

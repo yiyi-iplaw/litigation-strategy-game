@@ -626,6 +626,9 @@ def file_motion():
     spend_plaintiff(random.randint(1200, 2200))
     g()["motion_filed"] = True
 
+    if g()["strategy"] is None:
+        g()["strategy"] = "mtd"
+
     mapping = {
         "mtd": "你正式提交了 Motion to Dismiss，核心围绕个人管辖与 forum linkage 展开。",
         "inj": "你正式提交了对 TRO / 初步禁令的对抗性材料，重心放在紧急性和证据可靠性。",

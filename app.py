@@ -483,6 +483,8 @@ def init_game(seed=None):
         "outcome": None,
         "plaintiff_last_offer_round": -1,
         "plaintiff_weakened": False,
+        "plaintiff_initial_demand": None,
+        "plaintiff_demand_strategy": None,
         "history": [],
         "facts_known": [],
         "research_known": [],
@@ -771,20 +773,40 @@ def get_final_position(liability, cost_spent):
 
 def compute_final_score(outcome):
     init = get_initial_position()
-
     initial_advantage = init["fact_score"] * 0.6 + init["budget_score"] * 0.4
 
     liability = estimate_liability(outcome)
     cost_spent = max(0, g()["initial_client_budget"] - g()["client_budget"])
 
-    liability_norm = min(liability / 30000, 1)
-    cost_norm = min(cost_spent / max(g()["initial_client_budget"], 1), 1)
+    # 负赔偿（律师费偿还）：净收益为正，liability_norm 为 0
+    if liability < 0:
+        liability_norm = 0.0
+        cost_norm = max(0, (cost_spent + liability) / max(g()["initial_client_budget"], 1))
+        cost_norm = min(cost_norm, 1)
+    else:
+        liability_norm = min(liability / 30000, 1)
+        cost_norm = min(cost_spent / max(g()["initial_client_budget"], 1), 1)
 
     final_goodness = (1 - liability_norm) * 0.7 + (1 - cost_norm) * 0.3
-
     performance_delta = final_goodness - initial_advantage
     score = int(50 + performance_delta * 50)
-    score = max(1, min(99, score))
+
+    # 特殊结局评分修正：PI 失败后的结局池都是胜利，评分不应被通用公式压低
+    route = outcome.get("route", "")
+    pi_victory_routes = {
+        "PI 失败后原告撤诉": 88,
+        "PI 失败后象征性和解": 82,
+        "§505 律师费偿还": 96,
+        "Rule 11 制裁": 97,
+        "原告版权作品被发现系抄袭": 99,
+        "原告登记造假曝光": 99,
+        "原告律师因费用纠纷撤出": 90,
+        "反诉逆转": 100,
+    }
+    if route in pi_victory_routes:
+        score = pi_victory_routes[route]
+
+    score = max(1, min(100, score))
 
     outcome["initial_position"] = init
     outcome["liability"] = liability
@@ -910,10 +932,15 @@ def plaintiff_initiative_offer():
     if stage in g()["demand_stage_seen"]:
         return
 
-    # 原告主动出价时折扣更大，模拟希望尽快收场
-    discount = 0.55 + budget_ratio * 0.30
-    base_demand = compute_current_demand("pre_pi")
-    offer = max(500, int(base_demand * discount))
+    # 确保初始报价已设置
+    if g().get("plaintiff_initial_demand") is None:
+        anchor, strategy = compute_plaintiff_initial_demand()
+        g()["plaintiff_initial_demand"] = anchor
+        g()["plaintiff_demand_strategy"] = strategy
+
+    # 原告主动出价：以初始报价为基础，按预算压力打折
+    discount = 0.45 + budget_ratio * 0.35
+    offer = max(500, int(g()["plaintiff_initial_demand"] * discount))
 
     g()["current_demand"] = offer
     g()["settlement_history"].append({
@@ -1473,58 +1500,98 @@ def generate_pi_reply():
     g()["pi_reply_seen"] = True
     g()["subphase_done"] = True
 
-def compute_current_demand(stage):
+def compute_plaintiff_initial_demand():
+    """计算原告初始锚定报价，基于 merits 强度和风格选择报价策略。"""
     hc = g()["hidden_case"]
-    base = hc["plaintiff_expected_recovery"]
-    opp = g()["opponent_key"]
+    opp_key = g()["opponent_key"]
+    merits = compute_pi_merits_score()
+    dmg = compute_copyright_damages()
+    rng = random.Random(g()["seed"] + 5555)
 
-    if opp == "aggressive":
-        multiplier = 1.45
-    elif opp == "gray":
-        multiplier = 1.25
+    # 原告风格系数
+    style_mult = {"aggressive": 1.0, "gray": 0.85, "conservative": 0.70}[opp_key]
+
+    if merits < 40:
+        # merits 弱：用冻结金额和销售金额中较高者作为锚点，暗示账号风险
+        base = max(hc["frozen_amount"], hc["sales_amount"])
+        anchor = int(base * rng.uniform(1.2, 1.8) * style_mult)
+        strategy = "platform_risk"  # 用平台风险施压
+    elif merits < 65:
+        # merits 中等：用版权赔偿计算结果的高倍数
+        anchor = int(dmg["chosen_amount"] * rng.uniform(2.5, 4.0) * style_mult)
+        strategy = "damages_anchor"
     else:
-        multiplier = 1.05
+        # merits 强：直接锚定法定赔偿高档或故意侵权上限
+        if opp_key == "aggressive" or (opp_key == "gray" and rng.random() < 0.45):
+            anchor = int(150000 * style_mult)  # 故意侵权上限
+            strategy = "willful_max"
+        else:
+            anchor = int(30000 * style_mult)   # 法定赔偿标准上限
+            strategy = "statutory_max"
 
-    demand = int(base * multiplier)
+    # aggressive 原告有概率无论 merits 如何都喊最高档
+    if opp_key == "aggressive" and rng.random() < 0.30 and merits < 65:
+        anchor = max(anchor, int(30000 * style_mult))
+        strategy = "aggressive_bluff"
 
-    # 节点修正
-    if stage == "post_intake":
-        demand = int(demand * 1.05)
-    elif stage == "post_research":
-        demand = int(demand * 1.0)
-    elif stage == "post_mtd_win":
-        demand = int(demand * 0.15)
-    elif stage == "post_mtd_partial":
-        demand = int(demand * 0.7)
-    elif stage == "post_mtd_loss":
-        demand = int(demand * 1.25)
-    elif stage == "pre_pi":
-        demand = int(demand * 1.15)
-    elif stage == "post_pi_loss":
-        demand = int(demand * 1.35)
-    elif stage == "post_pi_limit":
-        demand = int(demand * 0.8)
-    elif stage == "post_pi_denied":
-        demand = int(demand * 0.2)
+    anchor = max(1000, anchor)
+    return anchor, strategy
 
-    # 证据与实体修正
-    pi_score = compute_pi_merits_score()
-    demand += int((pi_score - 50) * 120)
+def compute_current_demand(stage):
+    """后续阶段报价以初始报价为基础，按阶段系数调整。"""
+    hc = g()["hidden_case"]
 
+    # 初始报价作为基准
+    initial = g().get("plaintiff_initial_demand")
+    if initial is None:
+        initial, _ = compute_plaintiff_initial_demand()
+
+    # 阶段系数：以初始报价为 1.0，各阶段相对调整
+    stage_mult = {
+        "post_intake":      1.00,
+        "post_research":    0.95,
+        "post_mtd_win":     0.12,
+        "post_mtd_partial": 0.65,
+        "post_mtd_loss":    1.10,
+        "pre_pi":           1.05,
+        "post_pi_loss":     1.15,
+        "post_pi_limit":    0.70,
+        "post_pi_denied":   0.18,
+    }
+    mult = stage_mult.get(stage, 1.0)
+    demand = int(initial * mult)
+
+    # 玩家已掌握的线索对报价的压降（原告律师也知道被告掌握了什么）
+    fk = g()["facts_known"]
+    if "线索：Illinois forum contacts 不明确" in fk:
+        demand = int(demand * 0.90)
+    if "线索：测购材料存在缺口" in fk or "线索：未见明确测购" in fk:
+        demand = int(demand * 0.88)
+    if "线索：证据可能存在时间线问题" in fk:
+        demand = int(demand * 0.85)
     if hc["evidence_issue"]:
-        demand -= 2500
-    if "线索：Illinois forum contacts 不明确" in g()["facts_known"]:
-        demand -= 1200
-    if "线索：测购材料存在缺口" in g()["facts_known"] or "线索：未见明确测购" in g()["facts_known"]:
-        demand -= 1500
-    if "线索：证据可能存在时间线问题" in g()["facts_known"]:
-        demand -= 1800
+        demand = int(demand * 0.88)
+
+    # merits 实体修正（基于版权计算结果）
+    dmg = compute_copyright_damages()
+    if dmg["chosen_amount"] > 0:
+        ratio = demand / dmg["chosen_amount"]
+        if ratio > 8.0:
+            demand = int(dmg["chosen_amount"] * 8.0)
+        if ratio < 0.15 and stage not in ["post_mtd_win", "post_pi_denied"]:
+            demand = int(dmg["chosen_amount"] * 0.15)
 
     return max(0, demand)
 
 def trigger_demand(stage, label):
     if stage in g()["demand_stage_seen"]:
         return
+
+    # 确保初始报价已计算并记录
+    if g().get("plaintiff_initial_demand") is None:
+        anchor, strategy = compute_plaintiff_initial_demand()
+        g()["plaintiff_initial_demand"] = anchor
+        g()["plaintiff_demand_strategy"] = strategy
 
     demand = compute_current_demand(stage)
     g()["current_demand"] = demand
@@ -1536,6 +1603,7 @@ def trigger_demand(stage, label):
     g()["demand_stage_seen"].append(stage)
 
     add_history("原告报价", f"{label}：原告提出和解条件，要求支付 ${demand:,}。")
+
 
 def settlement_decision(action, counter_amount=None):
     demand = g()["current_demand"]
@@ -1554,8 +1622,8 @@ def settlement_decision(action, counter_amount=None):
     if action == "counter":
         g()["counter_offer_last"] = counter_amount
 
-        hc = g()["hidden_case"]
-        floor_price = int(hc["plaintiff_expected_recovery"] * 0.55)
+        dmg = compute_copyright_damages()
+        floor_price = dmg["floor_price"]
 
         if counter_amount >= floor_price:
             end_with_outcome({
@@ -1753,6 +1821,48 @@ def evaluate_outcome():
         bonus = poc_bonus_map.get(poc, 0)
         inj_score += bonus * mult
 
+    # 被告减损路径：即使 merits 强，以下操作仍有独立价值
+    # 路径一：程序性路线完全独立于 merits，不受压制
+    # （mtd_score 已在上方基于 forum_sale/test_buy 独立计算，无需额外处理）
+
+    # 路径二：版权登记有效性挑战
+    if hc["ownership_clarity"] == "questionable":
+        settle_score += 0.06
+        attrition_score += 0.06
+    elif hc["ownership_clarity"] == "weak":
+        settle_score += 0.10
+        attrition_score += 0.08
+        inj_score += 0.06
+
+    # 路径三：独立来源抗辩（即使实体上不强，增加原告举证负担）
+    if hc["independent_creation_support"] == "strong":
+        settle_score += 0.08
+        inj_score += 0.06
+    elif hc["independent_creation_support"] == "weak":
+        settle_score += 0.03
+
+    # 路径四：保护范围稀释（thin copyright）
+    if hc["prior_art_density"] == "high":
+        settle_score += 0.07
+        inj_score += 0.04
+        attrition_score += 0.04
+
+    # 路径五：消耗战（原告预算压力越大，attrition 越有价值）
+    pb_ratio = hc["plaintiff_budget"] / max(hc["plaintiff_budget_initial"], 1)
+    if pb_ratio < 0.50:
+        attrition_score += 0.10
+        settle_score += 0.06
+
+    # 路径六：反诉威胁（evidence_issue 或 ownership 问题给被告谈判筹码）
+    if hc["evidence_issue"] and hc["ownership_clarity"] != "clear":
+        settle_score += 0.08
+        attrition_score += 0.05
+
+    # merits 强时，保证 settle 和 attrition 仍有基本可玩性下限
+    if merits >= 65:
+        settle_score = max(settle_score, 0.32)
+        attrition_score = max(attrition_score, 0.28)
+
     path_scores = {
         "mtd": mtd_score,
         "inj": inj_score,
@@ -1876,6 +1986,12 @@ def evaluate_outcome():
     pi_granted = path_scores["inj"] >= pi_granted_threshold
     g()["pi_granted"] = pi_granted
     g()["pi_ruling_out"] = out
+
+    # 确保初始报价在任何结局路径下都已计算
+    if g().get("plaintiff_initial_demand") is None:
+        anchor, strategy = compute_plaintiff_initial_demand()
+        g()["plaintiff_initial_demand"] = anchor
+        g()["plaintiff_demand_strategy"] = strategy
 
     dmg = compute_copyright_damages()
 
@@ -2128,6 +2244,10 @@ def _pi_ending_counterclaim(dmg, cost_spent):
 
 
 def compute_default_judgment():
+    if g().get("plaintiff_initial_demand") is None:
+        anchor, strategy = compute_plaintiff_initial_demand()
+        g()["plaintiff_initial_demand"] = anchor
+        g()["plaintiff_demand_strategy"] = strategy
     dmg = compute_copyright_damages()
     merits = compute_pi_merits_score()
     pi_granted = g().get("pi_granted", False)
@@ -2233,38 +2353,86 @@ def post_pi_delay():
 def legal_analysis_text():
     hc = g()["hidden_case"]
     judge = JUDGE_PROFILES[g()["judge_key"]]["name"]
-    out = g()["outcome"]["title"]
+    out = g()["outcome"]
+    title = out["title"]
+    route = out.get("route", "")
+    merits = compute_pi_merits_score()
+    dmg = compute_copyright_damages()
 
     analysis = []
 
-    if hc["forum_sale"]:
-        analysis.append("本局底层事实中存在 Illinois 订单，这使程序抗辩天然更难。")
-    else:
-        analysis.append("本局底层事实中不存在明确 Illinois 订单，这为程序抗辩留下了空间。")
+    # 版权实体部分
+    work_labels = {
+        "simple_product_photo": "普通白底产品图",
+        "styled_product_image": "有一定风格化的产品图",
+        "high_creativity_work": "具有较高创意性的图片作品",
+    }
+    work_label = work_labels.get(hc["work_type"], "产品图")
+    analysis.append(
+        f"本局涉案版权作品为{work_label}，PI 实体胜算强度为 {merits}/100。"
+        f"原告{'有条件' if dmg['statutory_available'] else '无法'}主张法定赔偿，"
+        f"{'故意侵权认定成立' if dmg['willful'] else '本案未达到故意侵权标准'}。"
+    )
 
-    if hc["test_buy"]:
-        if hc["test_buy_strength"] == "strong":
-            analysis.append("原告确实掌握了较完整的测购材料，因此单纯否认本州联系并不容易。")
-        else:
-            analysis.append("原告虽然试图主张测购，但底层支撑并不强，仍有攻击余地。")
+    # 程序性事实部分
+    if hc["forum_sale"]:
+        analysis.append("底层事实存在 Illinois 订单，程序性切断难度较高。")
     else:
-        analysis.append("原告并无实质测购支撑，这削弱了其 forum linkage 叙事。")
+        analysis.append("底层事实不存在 Illinois 订单，程序性抗辩具备事实基础。")
+
+    if hc["test_buy"] and hc["test_buy_strength"] == "strong":
+        analysis.append("原告掌握了较完整的 Illinois 测购材料，forum linkage 叙事有一定支撑。")
+    elif hc["test_buy"]:
+        analysis.append("原告虽有测购记录，但支撑不完整，forum linkage 仍有可攻击的余地。")
+    else:
+        analysis.append("原告无实质测购材料，forum linkage 叙事较为薄弱。")
 
     if hc["evidence_issue"]:
-        analysis.append("原告材料确实存在时间线或来源链条问题，这一点对禁令对抗和压价谈判都很重要。")
-    else:
-        analysis.append("原告材料整体并无明显时间线硬伤，因此不能把全部希望押在证据瑕疵上。")
+        analysis.append("原告证据材料存在时间线或来源链条异常，这是本局最有价值的攻击点之一。")
 
-    analysis.append(f"法官风格为 {judge}，这改变了程序与禁令两条路线的权重。")
+    analysis.append(f"法官风格为{judge}，对本局程序与禁令路线的权重有直接影响。")
 
-    if "Motion to Dismiss" in out or "程序抗辩" in out:
-        analysis.append("本局裁决主要围绕个人管辖与程序门槛展开。你前期获取的材料和研究，决定了法院是否愿意在当前节点接受程序性切断。")
-    elif "禁令" in out or "顶住" in out:
-        analysis.append("本局裁决重心落在紧急性、材料可信度和继续推进的正当性上，而不只是权利主张本身。")
-    elif "和解" in out:
-        analysis.append("本局的实质结果不是法院直接替你赢，而是你通过程序压力和事实不确定性改变了双方议价位置。")
+    # 根据实际结局路线生成针对性分析
+    pi_loss_routes = {
+        "PI 失败后原告撤诉",
+        "PI 失败后象征性和解",
+        "§505 律师费偿还",
+        "Rule 11 制裁",
+        "原告版权作品被发现系抄袭",
+        "原告登记造假曝光",
+        "原告律师因费用纠纷撤出",
+        "反诉逆转",
+    }
+
+    if route in pi_loss_routes:
+        analysis.append(
+            "本局的核心胜点是禁令防守：PI merits 较弱，原告的版权实体主张经不起深入检验。"
+            "PI 被驳回后，原告面临 discovery 成本、反诉风险和律师费偿还压力，继续推进对其得不偿失。"
+        )
+        if route == "§505 律师费偿还":
+            analysis.append("法院最终依据 17 U.S.C. § 505 认定本案属于 objectively unreasonable litigation，被告获得律师费偿还。")
+        elif route == "Rule 11 制裁":
+            analysis.append("原告律师提交材料存在虚假陈述，触发 Rule 11 sanctions，是本案最极端的胜利形态。")
+        elif route == "原告律师因费用纠纷撤出":
+            analysis.append("原告委托人拒付律师费导致代理关系破裂，案件因 Failure to Prosecute 被驳回。这一结局本质上是原告预算压力与律师关系同时崩溃的结果。")
+        elif route == "反诉逆转":
+            analysis.append("被告方主动提出 DJ 反诉及 Abuse of Process 主张，彻底改变了双方的法律地位，是本案最完整的逆转。")
+        elif route in {"原告版权作品被发现系抄袭", "原告登记造假曝光"}:
+            analysis.append("discovery 阶段揭露的原告材料问题从根本上瓦解了其版权主张，属于罕见的戏剧性反转。")
+    elif route == "程序性胜利":
+        analysis.append("本局裁决的核心是程序门槛：forum linkage 的薄弱使原告无法在此管辖建立稳定的诉讼基础。前期的事实调查直接决定了程序路线的成功率。")
+    elif route in {"部分程序胜利"}:
+        analysis.append("法院接受了部分程序性主张，虽未完全终结案件，但显著提高了原告继续推进的成本。")
+    elif "和解" in route or "砍价" in route:
+        analysis.append("本局的实质结果是通过程序压力和事实不确定性改变了双方的议价位置，最终以低于初始报价的金额了结。")
+    elif "消耗战" in route:
+        analysis.append("本局的胜点不是正面裁决，而是把原告拖入高成本低收益的状态。预算压力最终改变了案件的推进动力。")
+    elif "缺席判决" in route:
+        analysis.append("律师费耗尽后缺席应诉是本案最坏的结局形态。版权案件中缺席判决往往等同于接受原告最高诉求，应当在预算耗尽前寻求任何可能的和解出口。")
+    elif "禁令防守" in route:
+        analysis.append("PI merits 偏弱使得禁令压力本身就站不稳脚跟。本局的关键在于把这一实体弱点有效转化为裁决结果。")
     else:
-        analysis.append("本局的核心不是法官立即替你下结论，而是谁能把对方拖入更高成本、更低收益的位置。")
+        analysis.append("本局的最终走向由多个变量共同决定。回顾材料调查和策略选择，识别关键节点有助于下一局作出更准确的判断。")
 
     return " ".join(analysis)
 
@@ -2278,26 +2446,82 @@ def key_cards_text():
 
 def counterfactual_text():
     strat = g()["strategy"]
-    out = g()["outcome"]["route"]
+    out = g()["outcome"]
+    route = out.get("route", "")
     hc = g()["hidden_case"]
+    merits = compute_pi_merits_score()
+    path_scores = g().get("path_scores", {})
 
-    if out == "程序性胜利":
-        return "如果你在更早阶段就仓促出手，而没有先摸 sales 或 test buy 相关材料，程序路线的成功率会明显下降。"
-    if out == "经济性胜利":
-        return "如果你继续拖延，风险和双方成本都会继续上升。此时收场未必最漂亮，但很可能是最稳妥的商业结果。"
-    if out == "禁令防守胜利":
-        return "如果你放弃针对紧急性和证据瑕疵的集中攻击，这一局更容易被原告拉回到平台风险叙事。"
-    if out == "消耗战胜利":
-        return "如果你过早追求正面裁决，反而可能替对方节约了成本。此局真正的胜点，是让对方持续投入却拿不到稳定回报。"
+    pi_loss_routes = {
+        "PI 失败后原告撤诉",
+        "PI 失败后象征性和解",
+        "§505 律师费偿还",
+        "Rule 11 制裁",
+        "原告版权作品被发现系抄袭",
+        "原告登记造假曝光",
+        "原告律师因费用纠纷撤出",
+        "反诉逆转",
+    }
 
-    if strat == "mtd" and hc["forum_sale"]:
-        return "本局其实存在州内订单，程序路线先天就比较吃亏。若改打禁令防守或压价谈判，结果未必更差。"
-    if strat == "inj" and not hc["evidence_issue"]:
-        return "本局原告材料并无明显硬伤，硬打禁令会更吃资源。若改走程序或消耗路线，也许更合适。"
-    if strat == "settle":
-        return "若你先补一层程序或证据压力，再进入谈判，结果通常会比现在更好。"
+    if route in pi_loss_routes:
+        lines = []
+        # 反事实：如果玩家走了更激进的路线
+        if strat in ["settle", "attrition"] or strat is None:
+            lines.append(
+                f"本局 merits 较弱（{merits}/100），PI 本来就很难获批。"
+                "如果你更早投入禁令防守路线，结局很可能一样好，但可以节省部分律师费。"
+            )
+        elif strat == "mtd" and not hc["forum_sale"]:
+            lines.append(
+                "你的程序抗辩策略方向是对的，但本局的核心胜点在版权实体的薄弱，而不是程序门槛。"
+                "两条路线可以并行，不必二选一。"
+            )
+        else:
+            lines.append(
+                f"本局 PI 实体胜算只有 {merits}/100，原告的版权主张先天不足。"
+                "你选择的路线与底层事实基本吻合，但如果更早完成版权实体调查，"
+                "你会更有信心在关键节点加大投入。"
+            )
+        # 针对具体结局的补充
+        if route == "原告律师因费用纠纷撤出":
+            lines.append(
+                "原告律师撤出是原告预算压力和内部矛盾共同导致的结果，不完全在你的控制之内。"
+                "如果原告预算更充足，同样的操作路径可能会以更低的和解金额收场，而不是零赔偿。"
+            )
+        elif route == "§505 律师费偿还":
+            lines.append(
+                "§505 律师费偿还属于罕见的最优结局，需要原告坚持推进直到证据崩塌。"
+                "如果你在 PI 失败后立即接受象征性报价，就无法等到这个结局。"
+            )
+        return " ".join(lines)
 
-    return "如果你能更早识别本局真正的关键变量，并把预算更集中地压在相关调查与研究上，结局通常会更好。"
+    if route == "程序性胜利":
+        if hc["forum_sale"]:
+            return "底层事实存在 Illinois 订单，程序胜利实属不易。如果你更早完成测购和销售调查，可以更精准地构建程序论点。"
+        return "程序性胜利需要前期充分的 forum contacts 调查作为支撑。如果你跳过了部分程序性调查就直接提交 MTD，胜率会明显下降。"
+
+    if "缺席判决" in route:
+        return (
+            f"律师费耗尽是本局最可避免的失败。原告初始报价 ${g().get('plaintiff_initial_demand', 0):,}，"
+            "而你最终承担的赔偿和律师费总和远高于此。在预算耗尽前的任何一个报价节点接受和解，都会比这个结局更好。"
+        )
+
+    if "和解" in route or "砍价" in route:
+        initial = g().get("plaintiff_initial_demand", 0)
+        total = out.get("liability", 0) + out.get("cost_spent", 0)
+        if initial and total < initial:
+            return f"你把实际总成本（${total:,}）压低到了初始报价（${initial:,}）以下，说明持续应诉是值得的。如果更早接受初始报价，反而会多付 ${initial - total:,}。"
+        return "和解结局的关键是找到报价最低点。如果在更多程序压力积累后再谈判，报价可能会进一步下降。"
+
+    if "消耗战" in route:
+        if hc["plaintiff_budget"] / max(hc["plaintiff_budget_initial"], 1) > 0.4:
+            return "消耗战路线需要原告预算真正被压缩才能发挥效果。本局原告预算仍有一定余量，如果切换到和解路线可能会更快锁定更低的结果。"
+        return "消耗战路线在本局有效，因为原告预算已经被显著压缩。如果更早触发主动出价机制，可能在更少律师费消耗的情况下取得相近结果。"
+
+    if "禁令防守" in route:
+        return f"本局 merits 为 {merits}/100，禁令防守有事实基础。如果你在 PI opposition 阶段选择了更匹配底层事实的攻击路线，防守胜率会进一步提升。"
+
+    return "回顾本局的关键决策节点：哪些调查和研究真正改变了你的判断？哪些操作在事后看是多余的成本？这些是下一局最有价值的参考。"
 
 def reveal_truths():
     hc = g()["hidden_case"]
@@ -2319,6 +2543,8 @@ def reveal_truths():
         f"PI 实体胜算强度：{compute_pi_merits_score()}",
         f"原告隐藏预算：约 ${max(hc['plaintiff_budget'], 0):,}（结局时口径）。",
         f"原告隐藏目标：{hc['plaintiff_goal']}。",
+        f"原告初始报价策略：{g().get('plaintiff_demand_strategy', '未触发')}。",
+        f"原告初始报价锚点：${g().get('plaintiff_initial_demand', 0):,}。",
     ]
     return truths
 
@@ -2878,7 +3104,13 @@ def render_result():
     st.markdown("### 财务结算")
     liability = out.get("liability", 0)
     cost_spent = out.get("cost_spent", max(0, g()["initial_client_budget"] - g()["client_budget"]))
-    net_loss = liability + cost_spent
+    actual_total = liability + cost_spent if liability >= 0 else cost_spent + liability
+
+    # 参照基准：原告第一轮报价
+    first_demand = None
+    if g()["settlement_history"]:
+        first_demand = g()["settlement_history"][0]["demand"]
+        first_label = g()["settlement_history"][0].get("label", "原告初始报价")
 
     fc1, fc2, fc3 = st.columns(3)
     with fc1:
@@ -2891,12 +3123,33 @@ def render_result():
     with fc2:
         st.metric("累计律师费消耗", f"${cost_spent:,}")
     with fc3:
-        if net_loss < 0:
-            st.metric("净结果", f"+${-net_loss:,}（净收益）")
-        elif net_loss == 0:
-            st.metric("净结果", "$0")
+        if actual_total <= 0:
+            st.metric("净结果", f"+${-actual_total:,}（净收益）")
         else:
-            st.metric("净总损失", f"${net_loss:,}")
+            st.metric("实际总成本", f"${actual_total:,}")
+
+    if first_demand is not None:
+        st.markdown("#### 与初始报价对比")
+        saved = first_demand - actual_total
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.metric("原告初始报价", f"${first_demand:,}",
+                      help=f"来源：{first_label}")
+        with col_b:
+            st.metric("实际总成本", f"${max(0, actual_total):,}" if actual_total >= 0 else f"-${-actual_total:,}")
+        with col_c:
+            if saved > 0:
+                st.metric("节省金额", f"${saved:,}", delta=f"比初始报价节省 {saved/first_demand:.0%}")
+            elif saved == 0:
+                st.metric("节省金额", "$0", delta="与初始报价持平")
+            else:
+                st.metric("超出初始报价", f"${-saved:,}", delta=f"超出 {-saved/first_demand:.0%}", delta_color="inverse")
+        if saved > 0:
+            st.success(f"你通过持续应诉，比直接接受初始报价节省了 ${saved:,}，覆盖了律师费并有节余。" if saved > cost_spent
+                      else f"你通过持续应诉，比直接接受初始报价节省了 ${saved:,}。律师费消耗 ${cost_spent:,}，净节省 ${saved - cost_spent:,}。" if saved > 0
+                      else "")
+        elif saved < 0:
+            st.warning(f"实际总成本超出了原告初始报价 ${-saved:,}。如果当初接受初始报价，总成本会更低。")
 
     if "damage_detail" in out:
         dmg = out["damage_detail"]

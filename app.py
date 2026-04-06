@@ -631,7 +631,7 @@ def file_motion():
 
     mapping = {
         "mtd": "你正式提交了 Motion to Dismiss，核心围绕个人管辖与 forum linkage 展开。",
-        "inj": "你正式提交了对 TRO / 初步禁令的对抗性材料，重心放在紧急性和证据可靠性。",
+        "inj": "你正式提交了对 TRO / 初步禁令的对抗性材料，重心放在紧急性和证据可靠性上。",
         "settle": "你发出了正式谈判与和解信号，试图在程序成本进一步扩大前压低预期。",
         "attrition": "你选择以有限动作维持推进，同时逼迫对方持续投入程序成本。",
     }
@@ -715,59 +715,6 @@ def attempt_settlement():
         }
 
     end_with_outcome(outcome)
-
-def attempt_settlement():
-    fk = g()["facts_known"]
-    hc = g()["hidden_case"]
-    round_num = g()["round"]
-
-    score = 0.4
-
-    # 有利因素
-    if "线索：Illinois forum contacts 不明确" in fk:
-        score += 0.2
-    if "线索：测购材料存在缺口" in fk or "线索：未见明确测购" in fk:
-        score += 0.15
-    if "线索：证据可能存在时间线问题" in fk:
-        score += 0.2
-    if hc["plaintiff_budget"] <= 5000:
-        score += 0.25
-
-    # 不利因素
-    if round_num == 1:
-        score -= 0.2
-    if "线索：可能存在 Illinois forum contacts" in fk:
-        score -= 0.2
-    if "线索：测购材料较完整" in fk:
-        score -= 0.15
-
-    if score >= 0.75:
-        outcome = {
-            "title": "低价和解成功",
-            "kind": "较好结局",
-            "score": 85,
-            "route": "和解压价成功",
-            "summary": "你利用已有信息和程序压力压低了对方预期，以较低成本结束案件。",
-        }
-    elif score >= 0.55:
-        outcome = {
-            "title": "中等和解",
-            "kind": "中等结局",
-            "score": 65,
-            "route": "和解收尾",
-            "summary": "你成功推动和解，但条件并不算理想。",
-        }
-    else:
-        outcome = {
-            "title": "和解条件不佳",
-            "kind": "失败结局",
-            "score": 40,
-            "route": "谈判失败",
-            "summary": "你在不利时点提出和解，对方没有给出合理条件。",
-        }
-
-    g()["outcome"] = outcome
-    g()["phase"] = "ended"
 
 def contains_any(items, substrings):
     return any(any(s in item for s in substrings) for item in items)

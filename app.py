@@ -468,6 +468,7 @@ def init_game(seed=None):
         "mtd_opposition_seen": False,
         "mtd_reply_done": False,
         "mtd_reply_choices": [],
+        "mtd_reply_skipped": False,
         "mtd_result": None,
         "pi_motion_seen": False,
         "pi_opposition_choices": [],
@@ -485,6 +486,7 @@ def init_game(seed=None):
         "plaintiff_weakened": False,
         "plaintiff_initial_demand": None,
         "plaintiff_demand_strategy": None,
+        "budget_warning": False,
         "history": [],
         "facts_known": [],
         "research_known": [],
@@ -1079,35 +1081,33 @@ def forced_end_check():
     if g()["outcome"] is not None:
         return
 
+    current_phase = g()["phase"]
+
+    # 预算真正归零才触发缺席判决
+    if g()["client_budget"] <= 0:
+        compute_default_judgment()
+        return
+
+    # 预算不足但 > 0：设置警告标志，不终止游戏
+    # 零成本阶段不需要警告
+    zero_cost_phases = [
+        "mtd_opposition", "mtd_ruling", "pi_motion",
+        "pi_reply", "pi_ruling", "post_pi_negotiation", "ended"
+    ]
     phase_min_cost = {
         "intake": 300,
         "investigation": 1500,
         "research": 800,
         "strategy": 500,
         "mtd_motion": 1500,
-        "mtd_opposition": 0,
         "mtd_reply": 700,
-        "mtd_ruling": 0,
-        "pi_motion": 0,
         "pi_opposition": 1300,
-        "pi_reply": 0,
-        "pi_ruling": 0,
-        "post_pi_negotiation": 0,
-        "ended": 0,
     }
-
-    current_phase = g()["phase"]
-    min_future_cost = phase_min_cost.get(current_phase, 0)
-
-    if (
-        g()["client_budget"] <= 0
-        or (
-            current_phase not in ["mtd_opposition", "mtd_ruling", "pi_motion", "pi_reply", "pi_ruling", "post_pi_negotiation", "ended"]
-            and g()["client_budget"] < min_future_cost
-        )
-    ):
-        compute_default_judgment()
-        return
+    min_cost = phase_min_cost.get(current_phase, 0)
+    if current_phase not in zero_cost_phases and min_cost > 0 and g()["client_budget"] < min_cost:
+        g()["budget_warning"] = True
+    else:
+        g()["budget_warning"] = False
 
     if g()["hidden_case"]["plaintiff_budget"] <= 0:
         if g()["plaintiff_weakened"] and g()["phase"] in [
@@ -2881,6 +2881,14 @@ def render_phase():
     st.markdown("---")
     st.subheader(f"第 {g()['round']} 回合｜{phase_name()}")
     st.info(current_guidance())
+
+    # 全局预算警告
+    if g().get("budget_warning") and g()["phase"] not in ["mtd_reply", "pi_opposition"]:
+        st.error(
+            f"⚠️ 当前预算 ${g()['client_budget']:,} 已不足以支付下一步的最低操作成本。"
+            "你仍可以接受当前报价，或继续进入下一阶段（部分阶段为免费）。"
+            "预算归零才会触发缺席判决。"
+        )
     if g().get("current_demand") is not None and g()["outcome"] is None and g()["phase"] != "post_pi_negotiation":
         st.markdown("### 原告当前报价")
         current = g()["current_demand"]
@@ -3108,6 +3116,12 @@ def render_phase():
                 st.rerun()
 
     elif ph == "mtd_reply":
+        if g().get("budget_warning"):
+            st.warning(
+                f"当前预算 ${g()['client_budget']:,} 不足以支付任何 reply 选项。"
+                "你可以选择跳过 reply 直接等待裁决（裁决胜率会略有下降），或接受当前报价了结。"
+            )
+
         cols = st.columns(3)
         reply_keys = ["reply_attack_timeline", "reply_attack_pj", "reply_narrow"]
         for i, k in enumerate(reply_keys):
@@ -3120,6 +3134,15 @@ def render_phase():
                     submit_mtd_reply(k)
                     forced_end_check()
                     st.rerun()
+
+        # 跳过 reply 选项：免费，任何时候都可用
+        if not g()["mtd_reply_done"]:
+            if st.button("跳过 reply，直接等待 MTD 裁决（免费）", use_container_width=True, key="skip_mtd_reply"):
+                g()["mtd_reply_done"] = True
+                g()["mtd_reply_skipped"] = True
+                add_history("跳过 MTD reply", "你选择不提交 reply，让法官根据双方现有材料直接裁决 MTD。")
+                forced_end_check()
+                st.rerun()
 
         if g()["mtd_reply_done"]:
             if st.button(next_phase_button(), use_container_width=True):
@@ -3143,6 +3166,10 @@ def render_phase():
                 score += 0.08
             if "reply_attack_pj" in g()["mtd_reply_choices"]:
                 score += 0.08
+
+            # 跳过 reply 的惩罚：没有反驳原告 opposition，评分略降
+            if g().get("mtd_reply_skipped"):
+                score -= 0.06
 
             score += JUDGE_PROFILES[g()["judge_key"]]["mtd_bonus"]
 
@@ -3197,6 +3224,12 @@ def render_phase():
                 st.rerun()
 
     elif ph == "pi_opposition":
+        if g().get("budget_warning"):
+            st.warning(
+                f"当前预算 ${g()['client_budget']:,} 不足以支付任何 PI opposition 论点。"
+                "你可以跳过提交直接进入下一阶段（裁决时无 opposition 加成），或接受当前报价了结。"
+            )
+
         st.caption("可多选，每个论点单独扣费。选完所有想要的论点后点击提交进入下一阶段。")
         cols = st.columns(2)
         pi_keys = [
@@ -3216,8 +3249,14 @@ def render_phase():
                     forced_end_check()
                     st.rerun()
 
-        if g()["pi_opposition_choices"]:
+        # 无论是否选了论点，都允许直接进入下一阶段
+        if g()["pi_opposition_choices"] or g().get("budget_warning"):
             if st.button(next_phase_button(), use_container_width=True):
+                advance_phase()
+                st.rerun()
+        elif not g()["pi_opposition_choices"]:
+            if st.button("跳过 PI opposition，直接进入下一阶段（免费）", use_container_width=True, key="skip_pi_opp"):
+                add_history("跳过 PI opposition", "你选择不提交 PI opposition，直接进入原告 PI reply 阶段。")
                 advance_phase()
                 st.rerun()
 

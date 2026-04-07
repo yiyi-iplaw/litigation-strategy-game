@@ -3431,6 +3431,9 @@ def render_result():
         elif saved < 0:
             st.warning(f"实际总成本超出了原告初始报价 ${-saved:,}。如果当初接受初始报价，总成本会更低。")
 
+    # 庭后对话：紧接财务结算
+    render_post_game_dialogue()
+
     if "damage_detail" in out:
         dmg = out["damage_detail"]
         st.markdown("#### 赔偿路径分析")
@@ -3477,126 +3480,195 @@ def render_result():
         with st.expander(item["title"], expanded=False):
             st.write(item["body"])
 
-    # 庭后对话
-    render_post_game_dialogue()
+# ─── 庭后对话系统 ────────────────────────────────────────────────
 
-# ─── 模块化句子生成器 ───────────────────────────────────────────
-
-SENTENCE_PARTS = {
-    # 主语
-    "subject_def": ["贵方", "阁下", "对方律师", "贵所"],
-    "subject_win": ["我方", "本所", "被告方"],
-
-    # 情态/副词
-    "modal_mock":  ["显然", "恐怕", "遗憾地说", "不得不指出"],
-    "modal_pro":   ["坦率地说", "客观而言", "不得不承认", "如实说来"],
-    "modal_hard":  ["即便如此", "尽管如此", "无论如何", "话虽如此"],
-    "modal_sad":   ["令人遗憾地", "无奈地", "不幸地", "出乎意料地"],
-
-    # 动词
-    "verb_mock":   ["高估了", "严重误判了", "错误理解了", "过度依赖了", "忽视了"],
-    "verb_pro":    ["专业处理了", "有效推进了", "准确识别了", "妥善应对了"],
-    "verb_hard":   ["仍然质疑", "保留异议于", "不认可", "仍不接受"],
-    "verb_sad":    ["未能充分应对", "错过了", "低估了", "未能识别"],
-
-    # 宾语/对象
-    "obj_proc":    ["forum linkage 的门槛", "管辖基础的薄弱性", "程序性抗辩的空间", "个人管辖的要件"],
-    "obj_merit":   ["版权主张的强度", "证据材料的可信度", "保护范围的限制", "独立来源的价值"],
-    "obj_strat":   ["被告的应诉意志", "本案的谈判筹码", "对方的预算压力", "时机选择的重要性"],
-    "obj_result":  ["本次程序的结果", "法院的裁量空间", "裁决的走向", "最终的法律结论"],
-
-    # 结尾修饰
-    "end_mock":    ["。", "，这一点在庭审记录中显而易见。", "，法院的裁决已经说明了一切。"],
-    "end_pro":     ["。", "，这是双方都需要面对的现实。", "，期待下次在其他案件中交流。"],
-    "end_hard":    ["。", "，本案在实体上仍有值得探讨之处。", "，程序结果并不代表最终的是非判断。"],
-    "end_sad":     ["。", "，客观条件所限，无奈至此。", "，下次定当改进。"],
+# 风格词替换池：每个语义槽按 aggressive/gray/conservative 三档
+STYLE_SLOTS = {
+    "accept": {
+        "aggressive": ["勉强接受", "暂时搁置争议", "不得不承认"],
+        "gray":       ["注意到", "了解到", "记录在案"],
+        "conservative": ["坦然接受", "客观承认", "如实说来"],
+    },
+    "modal_win": {
+        "aggressive": ["显然", "毫无疑问", "事实证明"],
+        "gray":       ["客观而言", "坦率地说", "就本局而言"],
+        "conservative": ["不得不承认", "平心而论", "如实说来"],
+    },
+    "modal_lose": {
+        "aggressive": ["即便如此", "尽管如此", "话虽如此"],
+        "gray":       ["令人遗憾地", "出乎意料地", "不得不说"],
+        "conservative": ["无奈地", "遗憾地", "坦白讲"],
+    },
+    "modal_plaintiff_win": {
+        "aggressive": ["本次裁决不过是", "程序上的胜利并不意味着", "贵方或许忘了"],
+        "gray":       ["值得注意的是", "还有一点", "不过"],
+        "conservative": ["感谢贵方的专业应对，但", "我方尊重结果，不过", "坦率地说"],
+    },
+    "modal_plaintiff_lose": {
+        "aggressive": ["裁决已定，但", "我方保留权利", "这不过是第一回合"],
+        "gray":       ["我方已注意到", "结果虽如此", "我方理解"],
+        "conservative": ["我方接受裁决", "感谢双方的专业推进", "期待未来合作"],
+    },
+    "persist_verb": {
+        "aggressive": ["仍然存在", "并未因此消失", "迟早会被正视"],
+        "gray":       ["仍有讨论空间", "尚待厘清", "有其复杂性"],
+        "conservative": ["值得关注", "需要被认真对待", "不容忽视"],
+    },
 }
 
-def build_sentence(style, rng):
-    """根据情绪风格从槽位池随机组合生成一句话。"""
-    p = SENTENCE_PARTS
-    if style == "mock":
-        subj = rng.choice(p["subject_def"])
-        modal = rng.choice(p["modal_mock"])
-        verb = rng.choice(p["verb_mock"])
-        obj = rng.choice(p["obj_proc"] + p["obj_merit"])
-        end = rng.choice(p["end_mock"])
-        return f"{subj}{modal}{verb}{obj}{end}"
-    elif style == "pro":
-        subj = rng.choice(p["subject_win"])
-        modal = rng.choice(p["modal_pro"])
-        verb = rng.choice(p["verb_pro"])
-        obj = rng.choice(p["obj_strat"] + p["obj_result"])
-        end = rng.choice(p["end_pro"])
-        return f"{modal}，{subj}{verb}{obj}{end}"
-    elif style == "hard":
-        modal = rng.choice(p["modal_hard"])
-        verb = rng.choice(p["verb_hard"])
-        obj = rng.choice(p["obj_merit"] + p["obj_result"])
-        end = rng.choice(p["end_hard"])
-        return f"{modal}，我方{verb}{obj}{end}"
-    else:  # sad
-        modal = rng.choice(p["modal_sad"])
-        verb = rng.choice(p["verb_sad"])
-        obj = rng.choice(p["obj_proc"] + p["obj_strat"])
-        end = rng.choice(p["end_sad"])
-        return f"{modal}，我方{verb}{obj}{end}"
+def get_slot(slot_name, opp_key, rng):
+    pool = STYLE_SLOTS.get(slot_name, {})
+    words = pool.get(opp_key, pool.get("gray", ["如此"]))
+    return rng.choice(words)
 
-def build_plaintiff_reply(player_style, outcome_kind, opp_key, rng):
-    """原告根据玩家选择的风格和结局类型作出回应。"""
-    p = SENTENCE_PARTS
-    is_win = "胜利" in outcome_kind or "较好" in outcome_kind
+def build_case_context():
+    """读取本局状态，生成话题清单和填充数据。"""
+    hc = g()["hidden_case"]
+    out = g()["outcome"]
+    route = out.get("route", "")
+    fk = g().get("facts_known", [])
+    fk_str = " ".join(fk)
 
-    # 虚张声势：aggressive 输了仍可能强硬回应
-    bluff = opp_key == "aggressive" and not is_win and rng.random() < 0.45
+    topics = []
 
-    if is_win and player_style == "mock":
-        # 玩家嘲讽，原告输了：可能强硬反击或认输
-        if opp_key == "aggressive" or bluff:
-            modal = rng.choice(p["modal_hard"])
-            verb = rng.choice(p["verb_hard"])
-            obj = rng.choice(p["obj_result"])
-            end = rng.choice(p["end_hard"])
-            return f"{modal}，我方{verb}{obj}{end}"
+    # 话题一：程序性结果
+    if "程序" in route or "MTD" in out.get("title", ""):
+        if not hc["forum_sale"]:
+            topics.append({
+                "tag": "proc_win",
+                "fact": "Illinois 订单",
+                "player_template": "[modal_win]，forum linkage 的薄弱从一开始就决定了本案的走向。",
+                "plaintiff_template": "[modal_plaintiff_win]版权争议本身[persist_verb]。",
+            })
         else:
-            return rng.choice([
-                "程序结果已定，但版权争议本身并未因此消失。",
-                "此次结果我方接受，但保留就实体问题另行寻求救济的权利。",
-                "贵方本次表现值得认可，但我方委托人的权益仍需得到保护。",
-            ])
-    elif is_win and player_style == "pro":
-        return rng.choice([
-            "感谢贵方的专业应对，本次程序结果我方尊重。",
-            "贵方的程序性论点确有其依据，我方坦然接受裁决。",
-            "期待在其他案件中与贵所继续切磋，共同维护法律秩序。",
-        ])
-    elif is_win and player_style == "hard":
-        return rng.choice([
-            "程序门槛是贵方的优势，但实体问题终将有其归宿。",
-            "本次裁决基于程序，不代表版权侵害不存在。",
-            "我方保留在适当管辖地重新提起实体诉讼的权利。",
-        ])
-    elif not is_win and player_style == "hard":
-        # 玩家输了还硬气，原告可能嘲讽
-        subj = rng.choice(p["subject_def"])
-        modal = rng.choice(["坦率地说", "如实而言", "客观来看"])
-        verb = rng.choice(["已经", "不得不", "只能"])
-        return rng.choice([
-            f"{modal}，{subj}的抗辩空间已经相当有限。",
-            "结果已经说明了一切，期待贵方委托人认真考虑和解。",
-            f"裁决在案，{subj}的后续选项并不多。",
-        ])
-    elif not is_win and player_style == "sad":
-        return rng.choice([
-            "我方理解贵方的处境，如有和解意向，随时可以沟通。",
-            "诉讼结果对双方都有成本，期待能以务实方式了结。",
-            "希望贵方委托人能在后续程序中作出更为理性的判断。",
-        ])
-    else:
-        # 默认回应
-        subj = rng.choice(p["subject_def"])
-        obj = rng.choice(p["obj_result"])
-        return f"我方已注意到贵方的立场，{obj}将由后续程序决定。"
+            topics.append({
+                "tag": "proc_context",
+                "fact": "Illinois 订单存在",
+                "player_template": "[modal_win]，程序路线在本局创造了有利结果，尽管事实基础并不简单。",
+                "plaintiff_template": "[modal_plaintiff_win]管辖问题只是起点，实体争议[persist_verb]。",
+            })
+
+    # 话题二：版权实体强弱
+    merits = compute_pi_merits_score()
+    if merits < 40:
+        topics.append({
+            "tag": "merit_weak",
+            "fact": "版权实体偏弱",
+            "player_template": "[modal_win]，原告版权主张的保护范围在本局已被证明相当有限。",
+            "plaintiff_template": "[modal_plaintiff_win]版权保护的边界[persist_verb]，本局结果不代表实体上的最终判断。",
+        })
+    elif merits > 60:
+        topics.append({
+            "tag": "merit_strong",
+            "fact": "版权实体较强",
+            "player_template": "[modal_lose]，我方[modal_lose]在实体层面面临一定压力，但程序与谈判空间仍然存在。",
+            "plaintiff_template": "[modal_plaintiff_lose]，版权主张的强度[persist_verb]。",
+        })
+
+    # 话题三：在先作品
+    if "大幅压缩" in fk_str or "大量存在" in fk_str:
+        topics.append({
+            "tag": "prior_art",
+            "fact": "在先作品丰富",
+            "player_template": "[modal_win]，市场上大量在先作品的存在说明了原告保护范围的局限性。",
+            "plaintiff_template": "[modal_plaintiff_win]在先作品的存在不等于侵权不成立，相似性[persist_verb]。",
+        })
+
+    # 话题四：证据问题
+    if hc["evidence_issue"]:
+        topics.append({
+            "tag": "evidence",
+            "fact": "证据时间线异常",
+            "player_template": "[modal_win]，原告证据材料的时间线问题在本局中发挥了关键作用。",
+            "plaintiff_template": "[modal_plaintiff_win]证据瑕疵是程序问题，实体侵权事实[persist_verb]。",
+        })
+
+    # 话题五：财务结果
+    initial = g().get("plaintiff_initial_demand", 0)
+    liability = out.get("liability", 0)
+    cost = out.get("cost_spent", 0)
+    total = liability + cost if liability >= 0 else cost + liability
+    if initial and total < initial * 0.3:
+        topics.append({
+            "tag": "finance_win",
+            "fact": f"实际总成本 ${total:,} 远低于初始报价 ${initial:,}",
+            "player_template": f"[modal_win]，从 ${initial:,} 到 ${total:,}，这个结果说明了谈判筹码的真正价值。",
+            "plaintiff_template": f"[modal_plaintiff_win]和解金额反映的是双方对风险的共同判断，不代表我方认可侵权不成立。",
+        })
+    elif initial and total > initial:
+        topics.append({
+            "tag": "finance_lose",
+            "fact": f"实际总成本 ${total:,} 超出初始报价",
+            "player_template": f"[modal_lose]，本局的成本控制未能达到预期，这是需要改进的地方。",
+            "plaintiff_template": f"[modal_plaintiff_lose]，结果已经清楚，期待贵方委托人认真评估后续选项。",
+        })
+
+    # 话题六：原告律师撤出/版权造假等特殊结局
+    special_routes = {
+        "原告律师因费用纠纷撤出": {
+            "player_template": "[modal_win]，案件的走向有时并不只取决于法律论点。",
+            "plaintiff_template": "[modal_plaintiff_win]委托关系的变化是内部事务，版权争议本身[persist_verb]。",
+        },
+        "§505 律师费偿还": {
+            "player_template": "[modal_win]，17 U.S.C. § 505 的适用是本案最有力的注脚。",
+            "plaintiff_template": "[modal_plaintiff_lose]，法院的裁量我方尊重，但这是极端情形。",
+        },
+        "原告版权作品被发现系抄袭": {
+            "player_template": "[modal_win]，发现原告作品的真实来源，是本案最戏剧性的转折。",
+            "plaintiff_template": "[modal_plaintiff_lose]，这一结果出乎我方预料，我方委托人对此深感遗憾。",
+        },
+        "Rule 11 制裁": {
+            "player_template": "[modal_win]，Rule 11 的适用说明了本案从一开始就存在的问题。",
+            "plaintiff_template": "[modal_plaintiff_lose]，制裁结果我方已提起上诉，此事尚未结束。",
+        },
+    }
+    if route in special_routes:
+        t = special_routes[route]
+        topics.append({
+            "tag": "special",
+            "fact": route,
+            "player_template": t["player_template"],
+            "plaintiff_template": t["plaintiff_template"],
+        })
+
+    return topics
+
+def fill_template(template, opp_key, rng):
+    """将模板中的槽位替换为风格对应的词汇。"""
+    result = template
+    for slot in STYLE_SLOTS:
+        placeholder = f"[{slot}]"
+        if placeholder in result:
+            result = result.replace(placeholder, get_slot(slot, opp_key, rng))
+    return result
+
+def build_dialogue_options(topics, opp_key, seed):
+    """从话题清单生成三个玩家选项和对应的原告回应。"""
+    rng = random.Random(seed)
+    # 取最多三个话题，优先特殊结局
+    special = [t for t in topics if t.get("tag") == "special"]
+    others = [t for t in topics if t.get("tag") != "special"]
+    rng.shuffle(others)
+    selected = (special + others)[:3]
+    # 如果不足三个，补充通用话题
+    while len(selected) < 3:
+        selected.append({
+            "tag": "generic",
+            "player_template": "[modal_win]，本局的结果是双方选择与运气共同作用的结果。",
+            "plaintiff_template": "[modal_plaintiff_lose]，期待双方在未来的案件中继续保持专业。",
+        })
+    options = []
+    for i, topic in enumerate(selected):
+        prng = random.Random(seed + i * 3333)
+        player_sent = fill_template(topic["player_template"], opp_key, prng)
+        prng2 = random.Random(seed + i * 3333 + 1)
+        plaintiff_sent = fill_template(topic["plaintiff_template"], opp_key, prng2)
+        options.append({
+            "player": player_sent,
+            "plaintiff": plaintiff_sent,
+            "tag": topic.get("tag", ""),
+        })
+    return options
 
 def render_post_game_dialogue():
     """庭后对话模块。"""
@@ -3607,56 +3679,37 @@ def render_post_game_dialogue():
     st.markdown("### 庭后一句话")
     st.caption("案件已结束。你想对对方律师说什么？")
 
-    out = g()["outcome"]
-    outcome_kind = out.get("kind", "")
     opp_key = g()["opponent_key"]
     seed = g()["seed"] + 99991
-    rng_base = random.Random(seed)
 
-    # 根据结局类型决定三个按钮的情绪色彩权重
-    is_win = "胜利" in outcome_kind or "较好" in outcome_kind
-    if is_win:
-        styles = [
-            ("mock", build_sentence("mock", random.Random(seed + 1))),
-            ("pro",  build_sentence("pro",  random.Random(seed + 2))),
-            ("hard", build_sentence("hard", random.Random(seed + 3))),
-        ]
-    else:
-        styles = [
-            ("hard", build_sentence("hard", random.Random(seed + 1))),
-            ("sad",  build_sentence("sad",  random.Random(seed + 2))),
-            ("pro",  build_sentence("pro",  random.Random(seed + 3))),
-        ]
+    topics = build_case_context()
+    options = build_dialogue_options(topics, opp_key, seed)
 
-    # 用 session_state 记录玩家选择
     if "postgame_choice" not in st.session_state:
         st.session_state.postgame_choice = None
     if "postgame_reply" not in st.session_state:
         st.session_state.postgame_reply = None
+    if "postgame_player" not in st.session_state:
+        st.session_state.postgame_player = None
 
     if st.session_state.postgame_choice is None:
         cols = st.columns(3)
-        for i, (style, sentence) in enumerate(styles):
+        for i, opt in enumerate(options):
             with cols[i]:
-                if st.button(sentence, key=f"postgame_{i}", use_container_width=True):
-                    st.session_state.postgame_choice = style
-                    reply_rng = random.Random(seed + i * 7777)
-                    st.session_state.postgame_reply = build_plaintiff_reply(
-                        style, outcome_kind, opp_key, reply_rng
-                    )
+                if st.button(opt["player"], key=f"postgame_{i}", use_container_width=True):
+                    st.session_state.postgame_choice = i
+                    st.session_state.postgame_player = opt["player"]
+                    st.session_state.postgame_reply = opt["plaintiff"]
                     st.rerun()
     else:
-        # 显示玩家说的话
-        chosen_sentence = next(
-            (s for st_key, s in styles if st_key == st.session_state.postgame_choice),
-            ""
-        )
-        st.markdown(f"**你：** {chosen_sentence}")
+        st.markdown(f"**你：** {st.session_state.postgame_player}")
         st.markdown(f"**对方律师：** {st.session_state.postgame_reply}")
         if st.button("再说一句", use_container_width=True, key="postgame_reset"):
             st.session_state.postgame_choice = None
             st.session_state.postgame_reply = None
+            st.session_state.postgame_player = None
             st.rerun()
+
 
 if "game" not in st.session_state:
     init_game()

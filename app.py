@@ -534,6 +534,10 @@ def init_game(seed=None):
     }
 
     st.session_state.game = state
+    # 每局重置庭后对话状态
+    st.session_state.postgame_choice = None
+    st.session_state.postgame_reply = None
+    st.session_state.postgame_player = None
 
 def g():
     return st.session_state.game

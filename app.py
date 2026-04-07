@@ -673,9 +673,6 @@ def compute_copyright_damages():
         chosen_amount = path1
         chosen_label = "实际损害 + 被告可归因利润"
 
-    # floor price：原告愿意接受的最低和解金额
-    floor_price = int(chosen_amount * 0.30)
-
     return {
         "path1": path1,
         "path2": path2,
@@ -683,13 +680,40 @@ def compute_copyright_damages():
         "chosen_path": chosen_path,
         "chosen_amount": chosen_amount,
         "chosen_label": chosen_label,
-        "floor_price": floor_price,
         "willful": is_willful_infringement(),
         "statutory_available": can_claim_statutory_damages(),
         "contribution_rate": round(contribution, 3),
         "defendant_profit": defendant_profit,
         "plaintiff_actual_loss": plaintiff_actual_loss,
     }
+
+def compute_floor_price():
+    """动态底价：基于风险偏好、预算压力、底层 merits 计算。不对玩家暴露。"""
+    hc = g()["hidden_case"]
+    opp_key = g()["opponent_key"]
+    dmg = compute_copyright_damages()
+    chosen = dmg["chosen_amount"]
+
+    # 风险偏好决定底价基础系数
+    # conservative：输了想快速止损，底价低（愿意接受低价了结）
+    # aggressive：底价高，不轻易接受低价，预算耗尽时才崩
+    # gray：介于两者之间，带随机性
+    rng = random.Random(g()["seed"] + 8888 + g()["round"])
+    if opp_key == "conservative":
+        base_ratio = rng.uniform(0.12, 0.22)
+    elif opp_key == "aggressive":
+        base_ratio = rng.uniform(0.30, 0.45)
+    else:  # gray
+        base_ratio = rng.uniform(0.18, 0.35)
+
+    # 预算压力修正：预算越低底价越低
+    pb_ratio = hc["plaintiff_budget"] / max(hc["plaintiff_budget_initial"], 1)
+    pressure_discount = 1.0 - max(0, (0.50 - pb_ratio) * 0.60)
+    pressure_discount = max(0.40, pressure_discount)
+
+    floor = int(chosen * base_ratio * pressure_discount)
+    return max(300, floor)
+
 
 def get_initial_position():
     hc = g()["hidden_case"]
@@ -1656,33 +1680,132 @@ def settlement_decision(action, counter_amount=None):
 
     if action == "counter":
         g()["counter_offer_last"] = counter_amount
-
-        dmg = compute_copyright_damages()
-        floor_price = dmg["floor_price"]
-
-        if counter_amount >= floor_price:
-            end_with_outcome({
-                "title": "还价后和解",
-                "kind": "较好结局" if counter_amount <= demand * 0.75 else "中等结局",
-                "score": 66,
-                "route": "还价成功",
-                "summary": f"你提出 ${counter_amount:,} 的还价，原告最终接受，案件以该金额结案。",
-                "liability": counter_amount,
-            })
-        else:
-            add_history("还价结果", f"你提出 ${counter_amount:,} 的还价，原告拒绝。当前报价仍为 ${demand:,}。")
+        plaintiff_respond_to_counter(counter_amount)
         return
 
     if action == "reject":
         add_history("拒绝报价", f"你拒绝了原告 ${demand:,} 的报价，决定继续推进案件。")
+        # 原告拒绝后也进行一次决策：是否主动调整报价
+        plaintiff_recalibrate_after_reject()
+
+def plaintiff_respond_to_counter(counter_amount):
+    """原告对玩家还价作出动态回应。"""
+    demand = g()["current_demand"]
+    floor = compute_floor_price()
+    opp_key = g()["opponent_key"]
+    hc = g()["hidden_case"]
+    pb_ratio = hc["plaintiff_budget"] / max(hc["plaintiff_budget_initial"], 1)
+    rng = random.Random(g()["seed"] + g()["round"] * 4231 + counter_amount)
+
+    if counter_amount >= floor:
+        # 还价达到底价，原告接受
+        end_with_outcome({
+            "title": "还价后和解",
+            "kind": "较好结局" if counter_amount <= demand * 0.75 else "中等结局",
+            "score": 66,
+            "route": "还价成功",
+            "summary": f"你提出 ${counter_amount:,} 的还价，原告经过考量后接受，案件以该金额结案。",
+            "liability": counter_amount,
+        })
+        return
+
+    # 还价低于底价：原告决策
+    gap_ratio = (floor - counter_amount) / max(floor, 1)
+
+    # 让步意愿：conservative 最高，aggressive 最低
+    concession_will = {
+        "conservative": rng.uniform(0.55, 0.80),
+        "gray": rng.uniform(0.30, 0.60),
+        "aggressive": rng.uniform(0.10, 0.35),
+    }[opp_key]
+
+    # 预算压力提升让步意愿
+    concession_will = min(1.0, concession_will + (1.0 - pb_ratio) * 0.25)
+
+    if gap_ratio <= 0.15 and rng.random() < concession_will:
+        # 差距很小且原告愿意让步：接受
+        end_with_outcome({
+            "title": "还价后和解",
+            "kind": "较好结局",
+            "score": 70,
+            "route": "还价成功",
+            "summary": f"你提出 ${counter_amount:,} 的还价，原告考量后认为差距在可接受范围内，同意了结。",
+            "liability": counter_amount,
+        })
+        return
+
+    if rng.random() < concession_will * 0.8:
+        # 原告主动让步，给出中间价
+        midpoint = int((counter_amount + demand) * rng.uniform(0.45, 0.60))
+        midpoint = max(floor, midpoint)
+        old_demand = demand
+        g()["current_demand"] = midpoint
+        g()["settlement_history"].append({
+            "stage": f"counter_response_{g()['round']}",
+            "label": "原告还价",
+            "demand": midpoint,
+        })
+        add_history(
+            "原告回应还价",
+            f"你提出 ${counter_amount:,}，原告拒绝但作出让步，将报价从 ${old_demand:,} 下调至 ${midpoint:,}。"
+        )
+    else:
+        # 原告拒绝，维持或小幅上调（表示不满）
+        if gap_ratio > 0.50 and opp_key == "aggressive" and rng.random() < 0.35:
+            # aggressive 型对低价还价表示不满，短暂上调
+            new_demand = int(demand * rng.uniform(1.03, 1.08))
+            g()["current_demand"] = new_demand
+            add_history(
+                "原告回应还价",
+                f"你提出 ${counter_amount:,}，原告对此表示不满，将报价从 ${demand:,} 上调至 ${new_demand:,}。"
+            )
+        else:
+            add_history(
+                "原告回应还价",
+                f"你提出 ${counter_amount:,}，原告认为条件不可接受，维持当前报价 ${demand:,}。"
+            )
+
+def plaintiff_recalibrate_after_reject():
+    """玩家拒绝报价后，原告重新评估是否调整报价。"""
+    if g()["outcome"] is not None:
+        return
+    hc = g()["hidden_case"]
+    pb_ratio = hc["plaintiff_budget"] / max(hc["plaintiff_budget_initial"], 1)
+    opp_key = g()["opponent_key"]
+    rng = random.Random(g()["seed"] + g()["round"] * 5573)
+    demand = g().get("current_demand")
+    if demand is None:
+        return
+
+    # 原告评估：是否主动下调报价吸引被告
+    adjust_prob = {
+        "conservative": 0.55,
+        "gray": 0.30,
+        "aggressive": 0.12,
+    }[opp_key]
+    adjust_prob = min(0.85, adjust_prob + (1.0 - pb_ratio) * 0.30)
+
+    if rng.random() < adjust_prob:
+        discount = rng.uniform(0.88, 0.96)
+        new_demand = max(compute_floor_price(), int(demand * discount))
+        if new_demand < demand:
+            g()["current_demand"] = new_demand
+            g()["settlement_history"].append({
+                "stage": f"recalibrate_{g()['round']}",
+                "label": "原告主动下调报价",
+                "demand": new_demand,
+            })
+            add_history(
+                "原告重新评估",
+                f"对方律师在你拒绝后重新评估形势，将报价从 ${demand:,} 下调至 ${new_demand:,}。"
+            )
+    # 否则维持，不产生 history 条目（不变就不说）
 
 def attempt_settlement():
     stage = f"{g()['phase']}_manual"
-
     if g().get("current_demand") is None:
         trigger_demand(stage, "你方主动提出和解后，原告给出报价")
-    else:
-        add_history("和解动态", f"当前已有原告报价：${g()['current_demand']:,}。你可以接受、拒绝或还价。")
+    # 已有报价时不再重复显示，界面上已有报价区块处理
 
 def contains_any(items, substrings):
     return any(any(s in item for s in substrings) for item in items)
@@ -2071,9 +2194,22 @@ def trigger_pi_loss_ending(dmg):
         w7 += 4
     if hc["plaintiff_goal"] == "freeze_fast":
         w1 += 8
-    if g()["opponent_key"] == "conservative":
-        w1 += 6
-        w2 += 4
+
+    # 风险偏好对结局分布的影响
+    opp_key = g()["opponent_key"]
+    if opp_key == "conservative":
+        # 保守型：PI 输了倾向快速止损，接受名义和解或撤诉
+        w1 += 12
+        w2 += 8
+        w3 -= 4
+        w7 += 3
+    elif opp_key == "aggressive":
+        # 激进型：PI 输了仍倾向于继续赌，撤诉少，但律师撤出和 §505 更多
+        w1 -= 10
+        w2 -= 6
+        w3 += 8
+        w4 += 3
+        w7 += 5
     if hc["evidence_issue"]:
         w3 += 8
         w4 += 4
@@ -2085,9 +2221,6 @@ def trigger_pi_loss_ending(dmg):
         w5 += 2
     if hc["prior_art_density"] == "high":
         w5 += 3
-    if g()["opponent_key"] == "aggressive":
-        w7 += 4
-        w3 += 3
     if (hc["independent_creation_support"] == "strong"
             and hc["similarity_to_claimed"] < 45
             and hc["evidence_issue"]):
@@ -2750,23 +2883,49 @@ def render_phase():
     st.info(current_guidance())
     if g().get("current_demand") is not None and g()["outcome"] is None and g()["phase"] != "post_pi_negotiation":
         st.markdown("### 原告当前报价")
-        st.warning(f"原告当前和解要求：${g()['current_demand']:,}")
+        current = g()["current_demand"]
 
-        c1, c2, c3 = st.columns(3)
+        # 显示报价历史变化
+        history_demands = [h["demand"] for h in g()["settlement_history"] if "demand" in h]
+        if len(history_demands) >= 2:
+            prev = history_demands[-2]
+            if current < prev:
+                st.warning(f"原告当前和解要求：${current:,}  ↓ 较上次下调 ${prev - current:,}")
+            elif current > prev:
+                st.warning(f"原告当前和解要求：${current:,}  ↑ 较上次上调 ${current - prev:,}")
+            else:
+                st.warning(f"原告当前和解要求：${current:,}（维持不变）")
+        else:
+            st.warning(f"原告当前和解要求：${current:,}")
+
+        c1, c2 = st.columns([1, 2])
         with c1:
             if st.button("接受报价", use_container_width=True, key=f"accept_{g()['phase']}"):
                 settlement_decision("accept")
                 st.rerun()
-        with c2:
             if st.button("拒绝并继续打", use_container_width=True, key=f"reject_{g()['phase']}"):
                 settlement_decision("reject")
                 g()["current_demand"] = None
                 st.rerun()
-        with c3:
-            if st.button("自动还价 70%", use_container_width=True, key=f"counter_{g()['phase']}"):
-                settlement_decision("counter", int(g()["current_demand"] * 0.7))
+        with c2:
+            st.caption("输入还价金额（或拖动调整比例）")
+            counter_pct = st.slider(
+                "还价比例（相对当前报价）",
+                min_value=10, max_value=95, value=70, step=5,
+                key=f"counter_pct_{g()['phase']}",
+                format="%d%%"
+            )
+            counter_val = st.number_input(
+                "还价金额 ($)",
+                min_value=0,
+                value=int(current * counter_pct / 100),
+                step=100,
+                key=f"counter_val_{g()['phase']}"
+            )
+            if st.button("提交还价", use_container_width=True, key=f"counter_{g()['phase']}"):
+                settlement_decision("counter", counter_val)
                 if g()["outcome"] is None:
-                    g()["current_demand"] = None
+                    pass  # 报价已由 plaintiff_respond_to_counter 更新
                 st.rerun()
 
     st.markdown("### 可选动作")
@@ -3114,15 +3273,24 @@ def render_phase():
 
         st.markdown("### 原告当前报价")
         current = g().get("current_demand")
+        history_demands = [h["demand"] for h in g()["settlement_history"] if "demand" in h]
         if current is None:
             st.warning("对方尚未给出明确报价，你可以主动尝试和解或选择拖延。")
+        elif len(history_demands) >= 2:
+            prev = history_demands[-2]
+            if current < prev:
+                st.warning(f"当前和解要求：${current:,}  ↓ 较上次下调 ${prev - current:,}")
+            elif current > prev:
+                st.warning(f"当前和解要求：${current:,}  ↑ 较上次上调 ${current - prev:,}")
+            else:
+                st.warning(f"当前和解要求：${current:,}（维持不变）")
         else:
             st.warning(f"当前和解要求：${current:,}")
         st.caption(f"已拖延回合：{g()['post_pi_delay_rounds']}/3｜律师费剩余：${max(g()['client_budget'], 0):,}")
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns([1, 2])
         with col1:
-            accept_disabled = g().get("current_demand") is None
+            accept_disabled = current is None
             if st.button("接受报价", use_container_width=True, key="post_pi_accept", disabled=accept_disabled):
                 demand = g()["current_demand"]
                 end_with_outcome({
@@ -3136,28 +3304,23 @@ def render_phase():
                 })
                 st.rerun()
         with col2:
-            counter_disabled = g().get("current_demand") is None
-            counter_default = int(g()["current_demand"] * 0.6) if g().get("current_demand") else 0
-            counter_val = st.number_input(
-                "还价金额 ($)", min_value=0,
-                value=counter_default,
-                step=500, key="post_pi_counter_val",
-                disabled=counter_disabled
-            )
+            counter_disabled = current is None
+            counter_default = int(current * 0.60) if current else 0
+            st.caption("输入还价金额（或拖动调整比例）")
+            if current:
+                counter_pct = st.slider(
+                    "还价比例", min_value=10, max_value=95, value=60, step=5,
+                    key="post_pi_counter_pct", format="%d%%"
+                )
+                counter_val = st.number_input(
+                    "还价金额 ($)", min_value=0,
+                    value=int(current * counter_pct / 100),
+                    step=100, key="post_pi_counter_val"
+                )
+            else:
+                counter_val = 0
             if st.button("提交还价", use_container_width=True, key="post_pi_counter", disabled=counter_disabled):
-                floor = dmg["floor_price"]
-                if counter_val >= floor:
-                    end_with_outcome({
-                        "title": "PI 后砍价成功",
-                        "kind": "较好结局",
-                        "score": 60,
-                        "route": "PI 后砍价成功",
-                        "summary": f"你提出 ${counter_val:,} 的还价，原告接受，案件以该金额结案。",
-                        "liability": counter_val,
-                        "damage_detail": dmg,
-                    })
-                else:
-                    add_history("还价被拒", f"你提出 ${counter_val:,}，低于原告底价 ${floor:,}，原告拒绝。当前报价维持 ${g()['current_demand']:,}。")
+                plaintiff_respond_to_counter(counter_val)
                 st.rerun()
         with col3:
             delay_disabled = g()["post_pi_delay_rounds"] >= 3

@@ -451,7 +451,6 @@ def init_game(seed=None):
 
     state = {
         "seed": seed,
-        "rng": seed,
         "round": 1,
         "phase": "intake",
         "subphase_done": False,
@@ -470,6 +469,9 @@ def init_game(seed=None):
         "mtd_reply_choices": [],
         "mtd_reply_skipped": False,
         "mtd_result": None,
+        "response_seen": False,
+        "reply_done": False,
+        "reply_choice": None,
         "pi_motion_seen": False,
         "pi_opposition_choices": [],
         "pi_reply_seen": False,
@@ -823,19 +825,6 @@ def estimate_liability(outcome):
     else:
         return int(dmg["chosen_amount"] * 0.50)
 
-def get_final_position(liability, cost_spent):
-    if liability <= 0:
-        liability_quad = "赔偿为零" if liability == 0 else "净收益为正"
-    elif liability <= 5000:
-        liability_quad = "赔偿低"
-    else:
-        liability_quad = "赔偿高"
-    cost_quad = "消耗低" if cost_spent <= g()["initial_client_budget"] * 0.5 else "消耗高"
-    return {
-        "liability_quad": liability_quad,
-        "cost_quad": cost_quad,
-    }
-
 def compute_final_score(outcome):
     init = get_initial_position()
     initial_advantage = init["fact_score"] * 0.6 + init["budget_score"] * 0.4
@@ -1070,7 +1059,7 @@ def unlock_story_round():
     r = g()["round"]
     if r == 2:
         g()["story_fragments"].append(
-            f"客户当前预算约为 ${g()['initial_client_budget']:,}。客户态度是：{g()['client']['attitude']}"
+            f"客户初始预算约为 ${g()['initial_client_budget']:,}，当前剩余约 ${max(g()['client_budget'], 0):,}。客户态度是：{g()['client']['attitude']}"
         )
     if r == 3:
         g()["story_fragments"].append(
@@ -1631,9 +1620,11 @@ def compute_current_demand(stage):
     if "线索：测购材料存在缺口" in fk or "线索：未见明确测购" in fk:
         demand = int(demand * 0.88)
     if "线索：证据可能存在时间线问题" in fk:
+        # 玩家已调查并发现时间线问题，折扣力度更强
         demand = int(demand * 0.85)
-    if hc["evidence_issue"]:
-        demand = int(demand * 0.88)
+    elif hc["evidence_issue"]:
+        # 证据问题存在但玩家未调查到，原告自身也知道材料偏弱，小幅自降
+        demand = int(demand * 0.92)
 
     # merits 实体修正（基于版权计算结果）
     dmg = compute_copyright_damages()
@@ -3208,7 +3199,7 @@ def render_phase():
                         g()["current_demand"] = int(g()["current_demand"] * boost)
                         add_history("对方调高报价", f"MTD 被驳回后，对方重新评估胜算，将当前和解要求上调至 ${g()['current_demand']:,}。")
                 elif g()["mtd_result"] == "partial":
-                    spend_plaintiff(-random.randint(1000, 3000))
+                    spend_plaintiff(random.randint(1000, 3000))
                     if g()["current_demand"] is not None:
                         boost = random.uniform(1.05, 1.15)
                         g()["current_demand"] = int(g()["current_demand"] * boost)
@@ -3740,11 +3731,12 @@ if g()["outcome"] is None:
 else:
     render_result()
 
-st.markdown("---")
-st.subheader("最近记录")
-if not g()["history"]:
-    st.write("你还没有行动。")
-else:
-    for item in reversed(g()["history"][-5:]):
-        with st.expander(item["title"], expanded=True):
-            st.write(item["body"])
+if g()["outcome"] is None:
+    st.markdown("---")
+    st.subheader("最近记录")
+    if not g()["history"]:
+        st.write("你还没有行动。")
+    else:
+        for item in reversed(g()["history"][-5:]):
+            with st.expander(item["title"], expanded=True):
+                st.write(item["body"])

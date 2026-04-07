@@ -2908,24 +2908,16 @@ def render_phase():
                 g()["current_demand"] = None
                 st.rerun()
         with c2:
-            st.caption("输入还价金额（或拖动调整比例）")
             counter_pct = st.slider(
                 "还价比例（相对当前报价）",
                 min_value=10, max_value=95, value=70, step=5,
                 key=f"counter_pct_{g()['phase']}",
                 format="%d%%"
             )
-            counter_val = st.number_input(
-                "还价金额 ($)",
-                min_value=0,
-                value=int(current * counter_pct / 100),
-                step=100,
-                key=f"counter_val_{g()['phase']}"
-            )
+            counter_val = int(current * counter_pct / 100)
+            st.caption(f"还价金额：**${counter_val:,}**（当前报价的 {counter_pct}%）")
             if st.button("提交还价", use_container_width=True, key=f"counter_{g()['phase']}"):
                 settlement_decision("counter", counter_val)
-                if g()["outcome"] is None:
-                    pass  # 报价已由 plaintiff_respond_to_counter 更新
                 st.rerun()
 
     st.markdown("### 可选动作")
@@ -3288,7 +3280,7 @@ def render_phase():
             st.warning(f"当前和解要求：${current:,}")
         st.caption(f"已拖延回合：{g()['post_pi_delay_rounds']}/3｜律师费剩余：${max(g()['client_budget'], 0):,}")
 
-        col1, col2 = st.columns([1, 2])
+        col1, col2, col3 = st.columns([1, 2, 1])
         with col1:
             accept_disabled = current is None
             if st.button("接受报价", use_container_width=True, key="post_pi_accept", disabled=accept_disabled):
@@ -3305,18 +3297,13 @@ def render_phase():
                 st.rerun()
         with col2:
             counter_disabled = current is None
-            counter_default = int(current * 0.60) if current else 0
-            st.caption("输入还价金额（或拖动调整比例）")
             if current:
                 counter_pct = st.slider(
                     "还价比例", min_value=10, max_value=95, value=60, step=5,
                     key="post_pi_counter_pct", format="%d%%"
                 )
-                counter_val = st.number_input(
-                    "还价金额 ($)", min_value=0,
-                    value=int(current * counter_pct / 100),
-                    step=100, key="post_pi_counter_val"
-                )
+                counter_val = int(current * counter_pct / 100)
+                st.caption(f"还价金额：**${counter_val:,}**（当前报价的 {counter_pct}%）")
             else:
                 counter_val = 0
             if st.button("提交还价", use_container_width=True, key="post_pi_counter", disabled=counter_disabled):
@@ -3324,7 +3311,7 @@ def render_phase():
                 st.rerun()
         with col3:
             delay_disabled = g()["post_pi_delay_rounds"] >= 3
-            if st.button("拖延（消耗双方资源）", use_container_width=True, key="post_pi_delay", disabled=delay_disabled):
+            if st.button("拖延", use_container_width=True, key="post_pi_delay", disabled=delay_disabled):
                 post_pi_delay()
                 st.rerun()
 

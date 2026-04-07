@@ -3477,6 +3477,187 @@ def render_result():
         with st.expander(item["title"], expanded=False):
             st.write(item["body"])
 
+    # 庭后对话
+    render_post_game_dialogue()
+
+# ─── 模块化句子生成器 ───────────────────────────────────────────
+
+SENTENCE_PARTS = {
+    # 主语
+    "subject_def": ["贵方", "阁下", "对方律师", "贵所"],
+    "subject_win": ["我方", "本所", "被告方"],
+
+    # 情态/副词
+    "modal_mock":  ["显然", "恐怕", "遗憾地说", "不得不指出"],
+    "modal_pro":   ["坦率地说", "客观而言", "不得不承认", "如实说来"],
+    "modal_hard":  ["即便如此", "尽管如此", "无论如何", "话虽如此"],
+    "modal_sad":   ["令人遗憾地", "无奈地", "不幸地", "出乎意料地"],
+
+    # 动词
+    "verb_mock":   ["高估了", "严重误判了", "错误理解了", "过度依赖了", "忽视了"],
+    "verb_pro":    ["专业处理了", "有效推进了", "准确识别了", "妥善应对了"],
+    "verb_hard":   ["仍然质疑", "保留异议于", "不认可", "仍不接受"],
+    "verb_sad":    ["未能充分应对", "错过了", "低估了", "未能识别"],
+
+    # 宾语/对象
+    "obj_proc":    ["forum linkage 的门槛", "管辖基础的薄弱性", "程序性抗辩的空间", "个人管辖的要件"],
+    "obj_merit":   ["版权主张的强度", "证据材料的可信度", "保护范围的限制", "独立来源的价值"],
+    "obj_strat":   ["被告的应诉意志", "本案的谈判筹码", "对方的预算压力", "时机选择的重要性"],
+    "obj_result":  ["本次程序的结果", "法院的裁量空间", "裁决的走向", "最终的法律结论"],
+
+    # 结尾修饰
+    "end_mock":    ["。", "，这一点在庭审记录中显而易见。", "，法院的裁决已经说明了一切。"],
+    "end_pro":     ["。", "，这是双方都需要面对的现实。", "，期待下次在其他案件中交流。"],
+    "end_hard":    ["。", "，本案在实体上仍有值得探讨之处。", "，程序结果并不代表最终的是非判断。"],
+    "end_sad":     ["。", "，客观条件所限，无奈至此。", "，下次定当改进。"],
+}
+
+def build_sentence(style, rng):
+    """根据情绪风格从槽位池随机组合生成一句话。"""
+    p = SENTENCE_PARTS
+    if style == "mock":
+        subj = rng.choice(p["subject_def"])
+        modal = rng.choice(p["modal_mock"])
+        verb = rng.choice(p["verb_mock"])
+        obj = rng.choice(p["obj_proc"] + p["obj_merit"])
+        end = rng.choice(p["end_mock"])
+        return f"{subj}{modal}{verb}{obj}{end}"
+    elif style == "pro":
+        subj = rng.choice(p["subject_win"])
+        modal = rng.choice(p["modal_pro"])
+        verb = rng.choice(p["verb_pro"])
+        obj = rng.choice(p["obj_strat"] + p["obj_result"])
+        end = rng.choice(p["end_pro"])
+        return f"{modal}，{subj}{verb}{obj}{end}"
+    elif style == "hard":
+        modal = rng.choice(p["modal_hard"])
+        verb = rng.choice(p["verb_hard"])
+        obj = rng.choice(p["obj_merit"] + p["obj_result"])
+        end = rng.choice(p["end_hard"])
+        return f"{modal}，我方{verb}{obj}{end}"
+    else:  # sad
+        modal = rng.choice(p["modal_sad"])
+        verb = rng.choice(p["verb_sad"])
+        obj = rng.choice(p["obj_proc"] + p["obj_strat"])
+        end = rng.choice(p["end_sad"])
+        return f"{modal}，我方{verb}{obj}{end}"
+
+def build_plaintiff_reply(player_style, outcome_kind, opp_key, rng):
+    """原告根据玩家选择的风格和结局类型作出回应。"""
+    p = SENTENCE_PARTS
+    is_win = "胜利" in outcome_kind or "较好" in outcome_kind
+
+    # 虚张声势：aggressive 输了仍可能强硬回应
+    bluff = opp_key == "aggressive" and not is_win and rng.random() < 0.45
+
+    if is_win and player_style == "mock":
+        # 玩家嘲讽，原告输了：可能强硬反击或认输
+        if opp_key == "aggressive" or bluff:
+            modal = rng.choice(p["modal_hard"])
+            verb = rng.choice(p["verb_hard"])
+            obj = rng.choice(p["obj_result"])
+            end = rng.choice(p["end_hard"])
+            return f"{modal}，我方{verb}{obj}{end}"
+        else:
+            return rng.choice([
+                "程序结果已定，但版权争议本身并未因此消失。",
+                "此次结果我方接受，但保留就实体问题另行寻求救济的权利。",
+                "贵方本次表现值得认可，但我方委托人的权益仍需得到保护。",
+            ])
+    elif is_win and player_style == "pro":
+        return rng.choice([
+            "感谢贵方的专业应对，本次程序结果我方尊重。",
+            "贵方的程序性论点确有其依据，我方坦然接受裁决。",
+            "期待在其他案件中与贵所继续切磋，共同维护法律秩序。",
+        ])
+    elif is_win and player_style == "hard":
+        return rng.choice([
+            "程序门槛是贵方的优势，但实体问题终将有其归宿。",
+            "本次裁决基于程序，不代表版权侵害不存在。",
+            "我方保留在适当管辖地重新提起实体诉讼的权利。",
+        ])
+    elif not is_win and player_style == "hard":
+        # 玩家输了还硬气，原告可能嘲讽
+        subj = rng.choice(p["subject_def"])
+        modal = rng.choice(["坦率地说", "如实而言", "客观来看"])
+        verb = rng.choice(["已经", "不得不", "只能"])
+        return rng.choice([
+            f"{modal}，{subj}的抗辩空间已经相当有限。",
+            "结果已经说明了一切，期待贵方委托人认真考虑和解。",
+            f"裁决在案，{subj}的后续选项并不多。",
+        ])
+    elif not is_win and player_style == "sad":
+        return rng.choice([
+            "我方理解贵方的处境，如有和解意向，随时可以沟通。",
+            "诉讼结果对双方都有成本，期待能以务实方式了结。",
+            "希望贵方委托人能在后续程序中作出更为理性的判断。",
+        ])
+    else:
+        # 默认回应
+        subj = rng.choice(p["subject_def"])
+        obj = rng.choice(p["obj_result"])
+        return f"我方已注意到贵方的立场，{obj}将由后续程序决定。"
+
+def render_post_game_dialogue():
+    """庭后对话模块。"""
+    if g()["outcome"] is None:
+        return
+
+    st.markdown("---")
+    st.markdown("### 庭后一句话")
+    st.caption("案件已结束。你想对对方律师说什么？")
+
+    out = g()["outcome"]
+    outcome_kind = out.get("kind", "")
+    opp_key = g()["opponent_key"]
+    seed = g()["seed"] + 99991
+    rng_base = random.Random(seed)
+
+    # 根据结局类型决定三个按钮的情绪色彩权重
+    is_win = "胜利" in outcome_kind or "较好" in outcome_kind
+    if is_win:
+        styles = [
+            ("mock", build_sentence("mock", random.Random(seed + 1))),
+            ("pro",  build_sentence("pro",  random.Random(seed + 2))),
+            ("hard", build_sentence("hard", random.Random(seed + 3))),
+        ]
+    else:
+        styles = [
+            ("hard", build_sentence("hard", random.Random(seed + 1))),
+            ("sad",  build_sentence("sad",  random.Random(seed + 2))),
+            ("pro",  build_sentence("pro",  random.Random(seed + 3))),
+        ]
+
+    # 用 session_state 记录玩家选择
+    if "postgame_choice" not in st.session_state:
+        st.session_state.postgame_choice = None
+    if "postgame_reply" not in st.session_state:
+        st.session_state.postgame_reply = None
+
+    if st.session_state.postgame_choice is None:
+        cols = st.columns(3)
+        for i, (style, sentence) in enumerate(styles):
+            with cols[i]:
+                if st.button(sentence, key=f"postgame_{i}", use_container_width=True):
+                    st.session_state.postgame_choice = style
+                    reply_rng = random.Random(seed + i * 7777)
+                    st.session_state.postgame_reply = build_plaintiff_reply(
+                        style, outcome_kind, opp_key, reply_rng
+                    )
+                    st.rerun()
+    else:
+        # 显示玩家说的话
+        chosen_sentence = next(
+            (s for st_key, s in styles if st_key == st.session_state.postgame_choice),
+            ""
+        )
+        st.markdown(f"**你：** {chosen_sentence}")
+        st.markdown(f"**对方律师：** {st.session_state.postgame_reply}")
+        if st.button("再说一句", use_container_width=True, key="postgame_reset"):
+            st.session_state.postgame_choice = None
+            st.session_state.postgame_reply = None
+            st.rerun()
+
 if "game" not in st.session_state:
     init_game()
 
